@@ -1,0 +1,4 @@
+torch
+numpy
+scikit-image
+transformers
