@@ -7,8 +7,10 @@ from torch import nn
 from swin import create_model
 from configs import get_args
 from utils import set_seed
-
 import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+import zarr
 
 args = get_args()
 
@@ -16,17 +18,22 @@ args = get_args()
 class StreamingTensor:
     def __init__(self, file, n_hist):
         print("Loading input file {}".format(file))
-        test_file = np.load(file)
-        self.data = test_file["arr_0"]
-        self.times = test_file["arr_1"]
+        self.ds = xr.open_zarr(file)
+        #        test_file = np.load(file)
+        #        self.data = test_file["arr_0"]
+        #        self.times = test_file["arr_1"]
         self.n_hist = n_hist
         self.i = 0
 
     def __next__(self):
-        test_data = self.data[self.i : self.i + args.n_hist, ...]
-        test_times = self.times[self.i : self.i + args.n_hist, ...]
+        indexes = np.arange(self.i, self.i + self.n_hist)
+        print(self.ds)
+        test_data = self.ds["effective_cloudiness"][indexes, :, :].values
+        test_times = self.ds["time"][indexes].values
+
         # tensorflow dimension order
-        test_data = np.expand_dims(np.squeeze(test_data, axis=-1), axis=0)
+        print(test_data.shape)
+        test_data = np.expand_dims(test_data, axis=0)
 
         if test_data.shape[1] < args.n_hist:
             raise StopIteration
@@ -34,10 +41,10 @@ class StreamingTensor:
         assert test_data.shape == (
             1,
             args.n_hist,
-            args.input_size,
-            args.input_size,
+            args.input_size[0],
+            args.input_size[1],
         ), "test_data.shape = {}, should be (1, {}, {}, {})".format(
-            test_data.shape, args.n_hist, args.input_size, args.input_size
+            test_data.shape, args.n_hist, args.input_size[0], args.input_size[0]
         )
 
         self.i += 1
@@ -47,7 +54,7 @@ class StreamingTensor:
         return self
 
     def __len__(self):
-        return self.data.shape[0] - 4 + 1
+        return len(self.ds.time) - 4 + 1
 
 
 def model_forward(m, inputs, targets_len):
@@ -56,9 +63,15 @@ def model_forward(m, inputs, targets_len):
     assert inputs.shape == (
         args.batch_size,
         args.n_hist,
-        args.input_size,
-        args.input_size,
-    ), f"inputs.shape: {inputs.shape}, should be ({args.batch_size}, {args.n_hist}, {args.input_size}, {args.input_size})"
+        args.input_size[0],
+        args.input_size[1],
+    ), f"inputs.shape: {inputs.shape}, should be ({args.batch_size}, {args.n_hist}, {args.input_size[0]}, {args.input_size[1]})"
+
+    x = inputs
+
+    for i in range(args.n_hist):
+        plt.imshow(np.squeeze(x.cpu().numpy()[0, i, ...]))
+        plt.savefig("inputs_{:02d}.png".format(i))
 
     for i in range(targets_len):
         if args.leadtime_conditioning:
@@ -69,13 +82,22 @@ def model_forward(m, inputs, targets_len):
             lt = np.expand_dims(lt, axis=(0, 1))
             lt = torch.Tensor(lt).to(args.device)
 
-        x = torch.cat((inputs, lt), dim=1)
-        y = m(x)
+            x = torch.cat((inputs, lt), dim=1)
 
+        print('X', x.shape, torch.mean(x))
+
+        y = m(x)
+        plt.imshow(np.squeeze(y.cpu().numpy()))
+        plt.savefig("outputs_{:02d}.png".format(i))
+
+        print('Y',y.shape, torch.mean(y))
         if len(y.shape) == 3:
             y = y.unsqueeze(1)
 
         outputs.append(y)
+
+        x = x[:, 1:, ...]
+        x = torch.cat((x, y), dim=1)
 
     outputs = torch.stack(outputs)
     outputs = torch.permute(outputs, (2, 1, 0, 3, 4))
@@ -84,9 +106,9 @@ def model_forward(m, inputs, targets_len):
     assert outputs.shape == (
         args.batch_size,
         targets_len,
-        args.input_size,
-        args.input_size,
-    ), f"outputs.shape: {outputs.shape}, should be ({args.batch_size}, {targets_len}, {args.input_size}, {args.input_size})"
+        args.input_size[0],
+        args.input_size[1],
+    ), f"outputs.shape: {outputs.shape}, should be ({args.batch_size}, {targets_len}, {args.input_size[0]}, {args.input_size[1]})"
 
     return outputs
 
@@ -120,6 +142,8 @@ def test(m, test_gen, n_pred):
             elif (i + 1) % (math.ceil(n / 100.0)) == 0:
                 print(".", end="", flush=True)
 
+            # only single prediction from data
+            break
     print("")
 
     outputs = np.squeeze(np.asarray(outputs), axis=1)
@@ -144,7 +168,7 @@ if __name__ == "__main__":
     test_gen = StreamingTensor(args.dataseries_file, args.n_hist)
     predictions, times = test(m, test_gen, args.n_pred)
 
-    filename = os.path.realpath(args.model_dir).split("/")[-1] + ".npz"
-    with open(filename, "wb") as fp:
-        np.savez(fp, predictions, times)
-        print(f"Wrote {len(predictions)} predictions to file '{filename}'")
+#    filename = os.path.realpath(args.model_dir).split("/")[-1] + ".npz"
+#    with open(filename, "wb") as fp:
+#        np.savez(fp, predictions, times)
+#        print(f"Wrote {len(predictions)} predictions to file '{filename}'")

@@ -1,11 +1,12 @@
 from swin import create_model
-from saf import SAFDataLoader
+from saf import create_generators
 from configs import get_args
 from utils import compute_metrics
 from torch.utils.data import DataLoader
 from torch.cuda import amp
 from torch.cuda.amp import autocast as autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 import numpy as np
@@ -23,20 +24,22 @@ def model_forward(m, inputs, targets_len):
     assert inputs.shape == (
         args.batch_size,
         args.n_hist + int(bool(args.leadtime_conditioning)),
-        args.input_size,
-        args.input_size,
+        args.input_size[0],
+        args.input_size[1],
     ), "inputs.shape: {}, should be ({}, {}, {}, {})".format(
         inputs.shape,
         args.batch_size,
         args.n_hist + int(bool(args.leadtime_conditioning)),
-        args.input_size,
-        args.input_size,
+        args.input_size[0],
+        args.input_size[1],
     )
 
     outputs = []
 
     assert args.n_pred == 1
-    assert targets_len == args.n_pred
+    assert targets_len == args.n_pred, "targets_len: {}, should be {}".format(
+        targets_len, args.n_pred
+    )
 
     for i in range(targets_len):
         y = m(inputs)
@@ -65,31 +68,46 @@ def model_forward(m, inputs, targets_len):
     assert outputs.shape == (
         args.batch_size,
         targets_len,
-        args.input_size,
-        args.input_size,
+        args.input_size[0],
+        args.input_size[1],
     ), "outputs.shape: {}, should be ({}, {}, {}, {})".format(
-        outputs.shape, args.batch_size, targets_len, args.input_size, args.input_size
+        outputs.shape,
+        args.batch_size,
+        targets_len,
+        args.input_size[0],
+        args.input_size[1],
     )
 
     return outputs
 
 
 def setup():
+    train_ds, valid_ds = create_generators(train_val_split=0.8)
+
     m = create_model(args.model_name)
 
+    if args.load_model:
+        m.load_state_dict(
+            torch.load(
+                "{}/trained_model_state_dict".format(args.model_dir),
+                map_location=torch.device(args.device),
+            )
+        )
+
+        print("Loaded model from {}".format(args.model_dir))
     optimizer = torch.optim.Adam(m.parameters(), lr=1e-4, weight_decay=1e-6)
 
     criterion = nn.MSELoss()
 
-    saf = SAFDataLoader()
+    #    saf = SAFDataLoader()
 
-    train_ds = saf.get_dataset(take_ratio=0.8)
-    valid_ds = saf.get_dataset(skip_ratio=0.8)
+    #    train_ds = saf.get_dataset(take_ratio=0.8)
+    #    valid_ds = saf.get_dataset(skip_ratio=0.8)
 
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
-        num_workers=1,
+        num_workers=2,
         pin_memory=True,
         drop_last=True,
     )
@@ -97,7 +115,7 @@ def setup():
     valid_loader = DataLoader(
         valid_ds,
         batch_size=args.batch_size,
-        num_workers=1,
+        num_workers=2,
         pin_memory=True,
         drop_last=True,
     )
@@ -112,7 +130,7 @@ def train_single(epoch, m, loader, criterion, optimizer):
 
     quarter = num_batches // 4
 
-    for b_idx, (inputs, targets) in enumerate(loader):
+    for b_idx, (inputs, targets) in enumerate(tqdm(loader)):
         optimizer.zero_grad()
         inputs, targets = map(lambda x: x.float().to(args.device), (inputs, targets))
         targets_len = targets.shape[1]
@@ -120,6 +138,7 @@ def train_single(epoch, m, loader, criterion, optimizer):
         with autocast():
             outputs = model_forward(m, inputs, targets_len)
 
+#            print(f"inputs: {torch.mean(inputs)}, outputs: {torch.mean(outputs)}")
             assert outputs.shape == targets.shape
             loss = criterion(outputs, targets)
 
@@ -129,7 +148,7 @@ def train_single(epoch, m, loader, criterion, optimizer):
 
         losses.append(loss.item())
 
-        if b_idx and b_idx % quarter == 0:
+        if b_idx and b_idx % quarter == 0 and False:
             print(
                 f"Epoch:{epoch:03d} Batch:{b_idx:03d}/{num_batches:03d} Loss:{np.mean(losses):.6f}"
             )
@@ -142,7 +161,7 @@ def test(epoch, m, loader, criterion):
     num_batches = len(loader)
     losses, mses, maes, ssims, bces = [], [], [], [], []
 
-    for batch_idx, (inputs, targets) in enumerate(loader):
+    for batch_idx, (inputs, targets) in enumerate(tqdm(loader)):
         with torch.no_grad():
             inputs, targets = map(
                 lambda x: x.float().to(args.device), [inputs, targets]
@@ -155,6 +174,7 @@ def test(epoch, m, loader, criterion):
                 f, axarr = plt.subplots(1, 2)
                 axarr[0].imshow(np.squeeze(targets), cmap="gray_r")
                 axarr[1].imshow(np.squeeze(outputs), cmap="gray_r")
+                plt.title("Epoch: {:03d}".format(epoch))
                 plt.savefig("outputs_{:03d}.png".format(epoch))
 
             losses.append(criterion(outputs, targets).item())
@@ -170,7 +190,7 @@ def test(epoch, m, loader, criterion):
 
 
 def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
-    train_losses, valid_losses = [], []
+    # train_losses, valid_losses = [], []
 
     best_metric = (
         0,
@@ -201,13 +221,14 @@ def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
     for epoch in range(epochs):
         start_time = time.time()
         train_loss = train_single(epoch, m, train_loader, criterion, optimizer)
-        train_losses.append(train_loss)
+        # train_losses.append(train_loss)
 
-        if (epoch + 1) % 2 == 0:
+        if args.plot_best or True: # (epoch + 1) % 2 == 0:
             valid_loss, mse, mae, ssim, bce = test(epoch, m, valid_loader, criterion)
 
-            valid_losses.append(valid_loss)
+            # valid_losses.append(valid_loss)
 
+            print("Validation loss for this epoch: {:.5f}".format(valid_loss))
             if valid_loss < best_metric[1]:
                 torch.save(m.state_dict(), f"{args.model_dir}/trained_model_state_dict")
                 best_metric = (epoch, valid_loss, mse, mae, ssim, bce)
@@ -236,12 +257,11 @@ def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
 
         scheduler.step(train_loss)
 
-        print(f"Epoch {epoch}/{epochs}: time usage: {time.time() - start_time:.0f}s")
+        print(f" Epoch {epoch}/{epochs}: time usage: {time.time() - start_time:.0f}s")
 
 
 def main():
     m, criterion, optimizer, tr_l, va_l = setup()
-
     train(m, criterion, optimizer, tr_l, va_l)
 
 

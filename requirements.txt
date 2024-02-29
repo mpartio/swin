@@ -2,3 +2,8 @@ torch
 numpy
 scikit-image
 transformers
+xarray
+zarr
+timm
+einops
+ml_collections

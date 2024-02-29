@@ -5,15 +5,28 @@ def get_args():
     parser = argparse.ArgumentParser("Swin training and evaluation", add_help=False)
     parser.add_argument("--device", default="cuda:0", type=str)
     parser.add_argument("--batch_size", default=16, type=int, help="Batch size")
-    parser.add_argument("--input_size", default=224, type=int, help="Input image size")
+    parser.add_argument(
+        "--input_size", default=(224, 224), type=int, help="Input image size"
+    )
     parser.add_argument("--model_name", default="", type=str, help="Model name")
     parser.add_argument(
         "--model_dir", default="/tmp", type=str, help="Model output dir"
     )
     parser.add_argument(
         "--dataseries_file",
-        default="/home/partio/cloudnwc/effective_cloudiness/data/dataseries/npz/224x224/nwcsaf-effective-cloudiness-20190801-20200801-img_size=224x224-float32.npz",
         type=str,
+    )
+    parser.add_argument(
+        "--dataseries_directory",
+        default="/home/partio/cloudnwc/effective_cloudiness/data/dataseries/224x224",
+        type=str,
+    )
+
+    parser.add_argument(
+        "--load_model",
+        default=False,
+        action="store_true",
+        help="Load model from checkpoint",
     )
     parser.add_argument("--plot_best", default=False, action="store_true")
 

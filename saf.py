@@ -1,5 +1,7 @@
 import numpy as np
 import glob
+import xarray as xr
+import zarr
 from datetime import datetime, timedelta
 from enum import Enum
 import copy
@@ -11,55 +13,46 @@ from torch.utils.data import IterableDataset
 args = get_args()
 
 
-def read_times_from_preformatted_files_directory(dirname):
-    toc = {}
-    for f in glob.glob("{}/*-times.npy".format(dirname)):
-        times = np.load(f)
-
-        for i, t in enumerate(times):
-            toc[t] = {"filename": f.replace("-times", ""), "index": i, "time": t}
-
-    times = list(toc.keys())
-
-    times.sort()
-    print("Read {} times from {}".format(len(times), dirname))
-    return times, toc
+def read_xarray_dataset(dirname):
+    ds = xr.open_mfdataset(
+        "{}/*.zarr".format(dirname), engine="zarr", data_vars=["effective_cloudiness"]
+    )
+    print(ds)
+    return ds
 
 
-def read_datas_from_preformatted_files_directory(dirname, toc, times):
-    datas = []
-    print("Reading data for {}".format(times))
-    for t in times:
-        e = toc[t]
-        idx = e["index"]
-        filename = e["filename"]
-        datafile = np.load(filename, mmap_mode="r")
-        datas.append(datafile[idx])
+def create_generators(train_val_split=0.8, sample_length=5):
+    ds = read_xarray_dataset(args.dataseries_directory)
 
-    return datas, times
+    ds_len = len(ds["time"])
 
+    indexes = np.arange(0, ds_len - sample_length, sample_length)
+    #    np.random.shuffle(indexes)
 
-def read_times_from_preformatted_file(filename):
-    ds = np.load(filename)
-    data = ds["arr_0"]
-    times = ds["arr_1"]
+    train_len = int(len(indexes) * train_val_split)
+    train_indexes = indexes[0:train_len]
+    val_indexes = indexes[train_len:]
 
-    toc = {}
-    for i, t in enumerate(times):
-        toc[t] = {"index": i, "time": t}
+    train_indexes = (
+        np.repeat(train_indexes, sample_length).reshape(-1, sample_length)
+        + np.arange(sample_length)
+    ).flatten()
 
-    print("Read {} times from {}".format(len(times), filename))
+    val_indexes = (
+        np.repeat(val_indexes, sample_length).reshape(-1, sample_length)
+        + np.arange(sample_length)
+    ).flatten()
 
-    return times, data, toc
+    train_ds = ds.isel(time=train_indexes)
+    val_ds = ds.isel(time=val_indexes)
 
+    train_gen = SAFDataGenerator(ds=train_ds, sample_length=sample_length)
+    val_gen = SAFDataGenerator(ds=val_ds, sample_length=sample_length)
 
-def read_datas_from_preformatted_file(all_times, all_data, req_times, toc):
-    datas = []
-    for t in req_times:
-        index = toc[t]["index"]
-        datas.append(all_data[index])
+    print("Train generator number of samples: {}".format(len(train_gen)))
+    print("Validation generator number of samples: {}".format(len(val_gen)))
 
-    return datas, req_times
+    return train_gen, val_gen
 
 
 class SAFDataGenerator:
@@ -67,90 +60,34 @@ class SAFDataGenerator:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-        assert len(self.placeholder) > 0
-        print(
-            "Generator number of samples: {} number of batches: {} batch size: {}".format(
-                len(self), len(self) // self.batch_size, self.batch_size
-            )
-        )
-
     def __len__(self):
         # """Return number of batches in this dataset"""
         # return len(self.placeholder) // self.batch_size
         """Return number of samples in this dataset"""
-        return len(self.placeholder)
+        return int(len(self.ds.time) / self.sample_length)
 
     def __getitem__(self, idx):
-        # placeholder X elements:
-        # 0.. args.n_hist: history of actual data (YYYYMMDDTHHMMSS, string)
-        # args.n_hist + 1: include datetime (bool)
-        # args.n_hist + 2: include topography (bool)
-        # args.n_hist + 3: include terrain type (bool)
-        # args.n_hist + 4: include sun elevation angle (bool)
+        indexes = np.arange(idx, idx + self.sample_length)
+        data = self.ds["effective_cloudiness"][indexes, :, :].values
 
-        ph = self.placeholder[idx]
-
-        X = ph[0]
-        Y = ph[1]
-
-        x_hist = X[0 : args.n_hist]
-
-        x, y, xtimes, ytimes = self.get_xy(x_hist, Y)
-
-        x = np.asarray(x)
-        y = np.asarray(y)
-
-        if args.leadtime_conditioning:
-            lt = X[args.n_hist]
-            lt = np.expand_dims(self.leadtimes[lt], axis=0)
-            lt = np.expand_dims(lt, axis=-1)
-            x = np.concatenate((x, lt), axis=0)
-
-        assert np.max(x) < 1.01, "x max: {:.2f}".format(np.max(x))
-
-        x = np.squeeze(x)
-        y = np.squeeze(y, axis=-1)
-
-        if args.n_pred > 1:
-            y = np.squeeze(y)
+        x = torch.from_numpy(data[:-1]).contiguous()
+        y = torch.unsqueeze(torch.from_numpy(data[-1]).contiguous(), 0)
 
         assert x.shape == (
-            args.n_hist + int(bool(args.leadtime_conditioning)),
-            args.input_size,
-            args.input_size,
-        ), "x shape is {}, should be ({}, {}, {}))".format(
-            x.shape,
-            args.n_hist + int(bool(args.leadtime_conditioning)),
-            args.input_size,
-            args.input_size,
-        )
+            self.sample_length - 1,
+            args.input_size[0],
+            args.input_size[1],
+        ), f"x shape is {x.shape}, should be ({self.sample_length}, {args.input_size[0]}, {args.input_size[1]})"
         assert y.shape == (
-            args.n_pred,
-            args.input_size,
-            args.input_size,
-        ), f"y shape is {y.shape}, should be ({args.n_pred}, {args.input_size}, {args.input_size})"
-
-        x = torch.from_numpy(x).contiguous()
-        y = torch.from_numpy(y).contiguous()
+            1,
+            args.input_size[0],
+            args.input_size[1],
+        ), f"y shape is {y.shape}, should be (1, {args.input_size[0]}, {args.input_size[1]})"
 
         return (x, y)
 
-    def get_xy(self, x_elems, y_elems):
-        xtimes = []
-        ytimes = []
-
-        if self.dataseries_file is not None:
-            x, xtimes = read_datas_from_preformatted_file(
-                self.elements, self.data, x_elems, self.toc
-            )
-            y, ytimes = read_datas_from_preformatted_file(
-                self.elements, self.data, y_elems, self.toc
-            )
-
-        return x, y, xtimes, ytimes
-
     def __call__(self):
-        for i in range(len(self.placeholder)):
+        for i in range(len(self.__len())):
             elem = self.__getitem__(i)
             yield elem
 
@@ -220,15 +157,7 @@ class SAFDataLoader:
 
         # create placeholder data
 
-        if self.dataseries_file is not None:
-            self.elements, self.data, self.toc = read_times_from_preformatted_file(
-                self.dataseries_file
-            )
-
-        elif self.dataseries_directory is not None:
-            self.elements, self.toc = read_times_from_preformatted_files_directory(
-                self.dataseries_directory
-            )
+        self.xds = read_xarray_dataset(args.dataseries_directory)
 
         i = 0
 
@@ -303,14 +232,9 @@ class SAFDataLoader:
         assert len(placeholder) > 0
 
         gen = SAFDataGenerator(
-            placeholder=placeholder,
+            # placeholder=placeholder,
             leadtimes=self.leadtimes,
             batch_size=args.batch_size,
-            img_size=self.img_size,
-            dataseries_file=self.dataseries_file,
-            elements=self.elements,
-            data=self.data,
-            toc=self.toc,
         )
 
         dataset = SAFDataset(gen)
