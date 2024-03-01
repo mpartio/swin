@@ -32,7 +32,6 @@ class StreamingTensor:
         test_times = self.ds["time"][indexes].values
 
         # tensorflow dimension order
-        print(test_data.shape)
         test_data = np.expand_dims(test_data, axis=0)
 
         if test_data.shape[1] < args.n_hist:
@@ -70,8 +69,8 @@ def model_forward(m, inputs, targets_len):
     x = inputs
 
     for i in range(args.n_hist):
-        plt.imshow(np.squeeze(x.cpu().numpy()[0, i, ...]))
-        plt.savefig("inputs_{:02d}.png".format(i))
+        plt.imshow(np.squeeze(x.cpu().numpy()[0, i, ...]), cmap='gray_r')
+        plt.savefig("images/inputs_{:02d}.png".format(i))
 
     for i in range(targets_len):
         if args.leadtime_conditioning:
@@ -87,8 +86,8 @@ def model_forward(m, inputs, targets_len):
         print('X', x.shape, torch.mean(x))
 
         y = m(x)
-        plt.imshow(np.squeeze(y.cpu().numpy()))
-        plt.savefig("outputs_{:02d}.png".format(i))
+        plt.imshow(np.squeeze(y.cpu().numpy()), cmap='gray_r')
+        plt.savefig("images/outputs_{:02d}.png".format(i))
 
         print('Y',y.shape, torch.mean(y))
         if len(y.shape) == 3:
