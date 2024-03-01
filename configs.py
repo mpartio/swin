@@ -28,7 +28,6 @@ def get_args():
         action="store_true",
         help="Load model from checkpoint",
     )
-    parser.add_argument("--plot_best", default=False, action="store_true")
 
     # model parameters
     parser.add_argument(
