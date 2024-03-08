@@ -26,7 +26,7 @@ def get_swin_config(name):
             embed_dim=96,
             drop_path_rate=0.2,
             window_size=7,
-            num_channels=args.n_hist + int(bool(args.leadtime_conditioning)),
+            num_channels=args.n_hist,
             image_size=args.input_size,
         )
 
@@ -37,7 +37,7 @@ def get_swin_config(name):
             embed_dim=128,
             drop_path_rate=0.5,
             window_size=7,
-            num_channels=args.n_hist + int(bool(args.leadtime_conditioning)),
+            num_channels=args.n_hist,
             image_size=args.input_size,
         )
 
@@ -48,7 +48,7 @@ def get_swin_config(name):
             embed_dim=192,
             drop_path_rate=0.2,
             window_size=7,
-            num_channels=args.n_hist + int(bool(args.leadtime_conditioning)),
+            num_channels=args.n_hist,
             image_size=args.input_size,
         )
 
@@ -59,7 +59,7 @@ def get_swin_config(name):
             embed_dim=128,
             drop_path_rate=0.5,
             window_size=8,
-            num_channels=args.n_hist + int(bool(args.leadtime_conditioning)),
+            num_channels=args.n_hist,
             image_size=args.input_size,
         )
 
@@ -70,7 +70,7 @@ def get_swin_config(name):
             embed_dim=96,
             drop_path_rate=0.2,
             window_size=7,
-            num_channels=args.n_hist + int(bool(args.leadtime_conditioning)),
+            num_channels=args.n_hist,
             image_size=args.input_size,
         )
 
@@ -123,7 +123,7 @@ class CloudCastSwin(nn.Module):
             # config.pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
             config.decoder_channels = (256, 128, 64, 16)
             config.skip_channels = [512, 256, 64, 16]
-            config.n_classes = 1
+            config.n_classes = len(args.parameters)
             config.n_skip = 3
             config.activation = "softmax"
             config.patches.grid = (
@@ -134,7 +134,9 @@ class CloudCastSwin(nn.Module):
             # config_vit.n_classes = args.num_classes
             # config_vit.n_skip = args.n_skip
 
-            self.base = TransUnet(config, img_size=args.input_size[0], num_classes=1)
+            self.base = TransUnet(
+                config, img_size=args.input_size[0], num_classes=len(args.parameters)
+            )
 
         elif self.model_fam == "swinunet3d":
             self.base = HyperSwinEncoderDecoder3D()
@@ -172,7 +174,7 @@ class CloudCastSwin(nn.Module):
                 self.base.decoder[0],
                 self.base.decoder[1],
                 nn.Conv2d(
-                    args.n_hist + int(bool(args.leadtime_conditioning)),
+                    args.n_hist,
                     1,
                     kernel_size=(1, 1),
                     stride=(1, 1),
