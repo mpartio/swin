@@ -16,7 +16,6 @@ import numpy as np
 from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm
 from torch.nn.modules.utils import _pair
 from scipy import ndimage
-#import vit_seg_configs as configs
 from resnetv2 import ResNetV2
 
 

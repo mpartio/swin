@@ -109,7 +109,6 @@ class CloudCastSwin(nn.Module):
             # config.classifier = 'seg'
             config.representation_size = None
             config.resnet_pretrained_path = None
-            # config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-B_16.npz'
             config.patch_size = 16
 
             config.activation = "softmax"
@@ -120,7 +119,6 @@ class CloudCastSwin(nn.Module):
             config.resnet.width_factor = 1
 
             config.classifier = "seg"
-            # config.pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
             config.decoder_channels = (256, 128, 64, 16)
             config.skip_channels = [512, 256, 64, 16]
             config.n_classes = len(args.parameters)
@@ -130,9 +128,6 @@ class CloudCastSwin(nn.Module):
                 int(args.input_size[0] / 16),
                 int(args.input_size[0] / 16),
             )
-            ##config_vit = CONFIGS_ViT_seg[args.vit_name]
-            # config_vit.n_classes = args.num_classes
-            # config_vit.n_skip = args.n_skip
 
             self.base = TransUnet(
                 config, img_size=args.input_size[0], num_classes=len(args.parameters)
