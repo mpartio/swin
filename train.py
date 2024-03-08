@@ -16,16 +16,18 @@ import time
 args = get_args()
 scaler = amp.GradScaler()
 
-def model_forward(m, inputs):  # , targets_len):
+assert args.n_pred == 1, "Only n_pred=1 is supported for now"
+
+def model_forward(m, inputs):
     assert inputs.shape == (
         args.batch_size,
-        args.n_hist + int(bool(args.leadtime_conditioning)),
+        (args.n_hist * len(args.parameters)),
         args.input_size[0],
         args.input_size[1],
     ), "inputs.shape: {}, should be ({}, {}, {}, {})".format(
         inputs.shape,
         args.batch_size,
-        args.n_hist + int(bool(args.leadtime_conditioning)),
+        (args.n_hist * len(args.parameters)),
         args.input_size[0],
         args.input_size[1],
     )
@@ -45,26 +47,27 @@ def model_forward(m, inputs):  # , targets_len):
 
     # X B C H W
     # [1, 16, 1, 224, 224]
-    # [20, 1, 1, 224, 224]
     outputs = torch.stack(outputs)
+
+    # Remove extra dimension X
+    # B C H W
+    # [16, 1, 224, 224]
+    outputs = torch.squeeze(outputs, dim=0)
 
     # B C X H W
     # [1, 16, 1, 224, 224]
     # [1, 1, 20, 224, 224]
-    outputs = torch.permute(outputs, (2, 1, 0, 3, 4))
-
-    # Remove extra dimension X
-    outputs = torch.squeeze(outputs, dim=0)
+    # outputs = torch.permute(outputs, (2, 1, 0, 3, 4))
 
     assert outputs.shape == (
         args.batch_size,
-        args.n_pred,
+        (args.n_pred * len(args.parameters)),
         args.input_size[0],
         args.input_size[1],
     ), "outputs.shape: {}, should be ({}, {}, {}, {})".format(
         outputs.shape,
         args.batch_size,
-        args.n_pred,
+        (args.n_pred * len(args.parameters)),
         args.input_size[0],
         args.input_size[1],
     )
@@ -73,9 +76,7 @@ def model_forward(m, inputs):  # , targets_len):
 
 
 def setup():
-    train_ds, valid_ds = create_generators(
-        train_val_split=0.8, n_hist=args.n_hist, n_pred=args.n_pred
-    )
+    train_ds, valid_ds = create_generators(train_val_split=0.8)
 
     m = create_model(args.model_name)
 
@@ -127,10 +128,14 @@ def train_single(epoch, m, loader, criterion, optimizer):
         with autocast():
             outputs = model_forward(m, inputs)  # , targets_len)
 
-            #print(
+            # print(
             #    f"inputs: {inputs.shape} {torch.mean(inputs)}, outputs: {outputs.shape} {torch.mean(outputs)}, targets: {targets.shape} {torch.mean(targets)}"
-            #)
-            assert outputs.shape == targets.shape
+            # )
+            assert (
+                outputs.shape == targets.shape
+            ), "outputs.shape: {}, targets.shape: {}".format(
+                outputs.shape, targets.shape
+            )
             loss = criterion(outputs, targets)
 
         scaler.scale(loss).backward()
