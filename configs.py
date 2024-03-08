@@ -18,7 +18,6 @@ def get_args():
     )
     parser.add_argument(
         "--dataseries_directory",
-        default="/home/partio/cloudnwc/effective_cloudiness/data/dataseries/224x224",
         type=str,
     )
 
@@ -36,8 +35,16 @@ def get_args():
     parser.add_argument(
         "--n_pred", default=1, type=int, help="Number of predicted images"
     )
-    parser.add_argument("--leadtime_conditioning", default=0, type=int)
+    parser.add_argument(
+        "--parameters",
+        nargs="+",
+        default="effective_cloudiness",
+        help="Parameters to use for training",
+    )
 
     args = parser.parse_args()
+
+    if type(args.parameters) == str:
+        args.parameters = [args.parameters]
 
     return args
