@@ -118,19 +118,13 @@ def train_single(epoch, m, loader, criterion, optimizer):
     num_batches = len(loader)
     losses = []
 
-    quarter = num_batches // 4
-
     for b_idx, (inputs, targets) in enumerate(tqdm(loader)):
         optimizer.zero_grad()
         inputs, targets = map(lambda x: x.float().to(args.device), (inputs, targets))
-        # targets_len = targets.shape[1]
 
         with autocast():
-            outputs = model_forward(m, inputs)  # , targets_len)
+            outputs = model_forward(m, inputs)
 
-            # print(
-            #    f"inputs: {inputs.shape} {torch.mean(inputs)}, outputs: {outputs.shape} {torch.mean(outputs)}, targets: {targets.shape} {torch.mean(targets)}"
-            # )
             assert (
                 outputs.shape == targets.shape
             ), "outputs.shape: {}, targets.shape: {}".format(
@@ -143,11 +137,6 @@ def train_single(epoch, m, loader, criterion, optimizer):
         scaler.update()
 
         losses.append(loss.item())
-
-        if b_idx and b_idx % quarter == 0 and False:
-            print(
-                f"Epoch:{epoch:03d} Batch:{b_idx:03d}/{num_batches:03d} Loss:{np.mean(losses):.6f}"
-            )
 
     return np.mean(losses)
 
@@ -178,7 +167,6 @@ def test(epoch, m, loader, criterion):
 
 
 def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
-    # train_losses, valid_losses = [], []
 
     best_metric = (
         0,
@@ -209,12 +197,9 @@ def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
     for epoch in range(epochs):
         start_time = time.time()
         train_loss = train_single(epoch, m, train_loader, criterion, optimizer)
-        # train_losses.append(train_loss)
 
         if True:  # (epoch + 1) % 2 == 0:
             valid_loss, mse, mae, ssim, bce = test(epoch, m, valid_loader, criterion)
-
-            # valid_losses.append(valid_loss)
 
             print("Validation loss for this epoch: {:.5f}".format(valid_loss))
             if valid_loss < best_metric[1]:
