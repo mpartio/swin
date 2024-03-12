@@ -118,8 +118,7 @@ def weighted_loss(y_pred, y_true):
 
     w_loss = torch.einsum(
         "nchw,c->nchw", (y_pred - y_true) ** 2, parameter_weights
-    ).type(torch.FloatTensor)
-    w_loss = w_loss.mean()
+    ).mean()
 
     return w_loss
 
