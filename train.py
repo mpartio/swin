@@ -15,8 +15,44 @@ import time
 
 args = get_args()
 scaler = amp.GradScaler()
+parameter_weights = None
 
 assert args.n_pred == 1, "Only n_pred=1 is supported for now"
+
+
+def create_parameter_weights():
+    def pressure_level_weight(x: float):
+        # Create similar weighting to pressure level as in graphcast paper.
+        # See fig 6 in graphcast paper
+        # In summaru the weights are normalized to sum to 1 so that the highest
+        # pressure level has the smallest weight.
+
+        plevels = np.asarray([300, 500, 700, 850, 925, 1000])
+        plevels_norm = plevels / np.sum(plevels)
+
+        y = plevels_norm[np.where(plevels == x)][0]
+
+        return round(y, 4)
+
+    w_list = []
+    for par in args.parameters:
+        if par == "effective_cloudiness":
+            w = 1.0
+        else:
+            name, leveln, levelv = par.split("_")
+            if leveln == "isobaricInhPa":
+                w = pressure_level_weight(int(levelv))
+                if name in ("u", "v"):
+                    w = w * 0.5
+            elif name == "pres" and leveln == "heightAboveSea":
+                w = 0.2
+
+        w_list.append(w)
+
+    w_list = torch.tensor(np.array(w_list))
+
+    return w_list
+
 
 def model_forward(m, inputs):
     assert inputs.shape == (
@@ -75,6 +111,19 @@ def model_forward(m, inputs):
     return outputs
 
 
+def weighted_loss(y_pred, y_true):
+    # y_pred, y_true: B C H W
+    # multiply channels with parameter weights and get mean
+    # which is then the weighted loss
+
+    w_loss = torch.einsum(
+        "nchw,c->nchw", (y_pred - y_true) ** 2, parameter_weights
+    ).type(torch.FloatTensor)
+    w_loss = w_loss.mean()
+
+    return w_loss
+
+
 def setup():
     train_ds, valid_ds = create_generators(train_val_split=0.8)
 
@@ -92,8 +141,6 @@ def setup():
 
     optimizer = torch.optim.Adam(m.parameters(), lr=1e-4, weight_decay=1e-6)
 
-    criterion = nn.MSELoss()
-
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -109,6 +156,11 @@ def setup():
         pin_memory=True,
         drop_last=True,
     )
+
+    criterion = weighted_loss
+
+    global parameter_weights
+    parameter_weights = create_parameter_weights().to(args.device)
 
     return m, criterion, optimizer, train_loader, valid_loader
 
@@ -167,7 +219,6 @@ def test(epoch, m, loader, criterion):
 
 
 def train(m, criterion, optimizer, train_loader, valid_loader, epochs=500):
-
     best_metric = (
         0,
         float("inf"),
