@@ -21,6 +21,7 @@ def read_xarray_dataset(dirname):
 
 
 def get_mean_std(ds):
+    print("Pre-calculated mean and std not found, doing it now")
     data = ds.to_array().values
 
     if len(data.shape) == 3:
@@ -50,6 +51,9 @@ def create_generators(train_val_split=0.8):
         torch.save(mean, "parameter_mean.pt")
         torch.save(std, "parameter_std.pt")
 
+    assert len(mean) == len(
+        args.parameters
+    ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
     ds_len = len(ds["time"])
     sample_length = args.n_hist + args.n_pred
 
@@ -107,7 +111,6 @@ class SAFDataGenerator:
             data = np.expand_dims(data, axis=1)
         else:
             data = np.moveaxis(data, 0, 1)
-
 
         x = torch.from_numpy(data[: args.n_hist]).contiguous()
         y = torch.from_numpy(data[args.n_hist :]).contiguous()
