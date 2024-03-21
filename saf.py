@@ -42,10 +42,11 @@ def create_generators(train_val_split=0.8):
         torch.save(std, "parameter_std.pt")
         w = create_parameter_weights()
         torch.save(w, "parameter_weights.pt")
+        print("done")
 
-        assert len(mean) == len(
-            args.parameters
-        ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
+    assert len(mean) == len(
+        args.parameters
+    ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
 
     ds_len = len(ds["time"])
     sample_length = args.n_hist + args.n_pred
