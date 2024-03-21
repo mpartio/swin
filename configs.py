@@ -1,12 +1,18 @@
 import argparse
 
+def parse_size(s):
+    try:
+        w, h = map(int, s.split("x"))
+        return w, h
+    except:
+        raise ValueError("Size must be W,H")
 
 def get_args():
     parser = argparse.ArgumentParser("Swin training and evaluation", add_help=False)
     parser.add_argument("--device", default="cuda:0", type=str)
     parser.add_argument("--batch_size", default=16, type=int, help="Batch size")
     parser.add_argument(
-        "--input_size", default=(224, 224), type=int, help="Input image size"
+        "--input_size", default=(224, 224), type=parse_size, help="Input image size"
     )
     parser.add_argument("--model_name", default="", type=str, help="Model name")
     parser.add_argument(
@@ -28,9 +34,8 @@ def get_args():
         help="Load model from checkpoint",
     )
 
-    # model parameters
     parser.add_argument(
-        "--n_hist", default=4, type=int, help="Number of history images"
+        "--n_hist", default=1, type=int, help="Number of history images"
     )
     parser.add_argument(
         "--n_pred", default=1, type=int, help="Number of predicted images"
@@ -38,13 +43,19 @@ def get_args():
     parser.add_argument(
         "--parameters",
         nargs="+",
-        default="effective_cloudiness",
+        default="effective_cloudiness_heightAboveGround_0",
         help="Parameters to use for training",
+    )
+    parser.add_argument(
+        "--n_workers", default=4, type=int, help="Number of data loaders"
     )
 
     args = parser.parse_args()
 
     if type(args.parameters) == str:
         args.parameters = [args.parameters]
+
+    if args.dataseries_file is None and args.dataseries_directory is None:
+        raise ValueError("Either dataseries_file or dataseries_directory must be set")
 
     return args
