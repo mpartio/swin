@@ -95,9 +95,9 @@ def create_static_features(ds):
         means.append(np.mean(batch, axis=(1, 2, 3)))  # C
         squares.append(np.mean(batch**2, axis=(1, 2, 3)))  # C
 
-    mean = torch.tensor(np.mean(np.stack(means), axis=0))  # C
+    mean = np.mean(np.stack(means), axis=0)  # C
     second_moment = np.mean(np.stack(squares), axis=0)
-    std = torch.tensor(np.sqrt(second_moment - mean**2))  # (C)
+    std = np.sqrt(second_moment - mean**2)  # (C)
 
     assert mean.shape[0] == len(args.parameters)
 
