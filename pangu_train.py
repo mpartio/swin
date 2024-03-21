@@ -44,7 +44,7 @@ def calc_loss(
     return loss
 
 
-def train(model, train_loader, val_loader, res_path):
+def train(model, train_loader, val_loader, surface_mask):
     """Training code"""
     # Prepare for the optimizer and scheduler
     optimizer = torch.optim.Adam(m.parameters(), lr=5e-4, weight_decay=3e-6)
@@ -75,15 +75,6 @@ def train(model, train_loader, val_loader, res_path):
     upper_mean = parameter_mean[1:].to(args.device)
     surface_std = parameter_std[0].to(args.device)
     upper_std = parameter_std[1:].to(args.device)
-
-    lsm = train_loader.get_static_features("lsm_heightAboveGround_0")
-    z = train_loader.get_static_features("z_heightAboveGround_0")
-    soil = torch.ones_like(lsm)
-
-    surface_mask = torch.stack([lsm, soil, z]).to(args.device)
-#    surface_mask = torch.ones(
-#        args.batch_size, 3, args.input_size[0], args.input_size[1]
-#    ).to(args.device)
 
     # Train a single Pangu-Weather model
     for i in range(epochs + 1):
@@ -176,9 +167,16 @@ def train(model, train_loader, val_loader, res_path):
 
 
 if __name__ == "__main__":
-    #    m = Pangu_lite().to(args.device)
-    m = Pangu().to(args.device)
+    m = Pangu_lite().to(args.device)
+    # m = Pangu().to(args.device)
     train_ds, valid_ds = create_generators(train_val_split=0.8)
+
+    lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
+    z = train_ds.get_static_features("z_heightAboveGround_0")
+    soil = torch.ones_like(lsm)
+
+    surface_mask = torch.stack([lsm, soil, z]).to(args.device)
+    surface_mask = surface_mask.unsqueeze(0).repeat(args.batch_size, 1, 1, 1)
 
     args = get_args()
     train_loader = DataLoader(
@@ -207,4 +205,4 @@ if __name__ == "__main__":
 
         print("Loaded model from {}".format(args.model_dir))
 
-    train(m, train_loader, valid_loader, args.model_dir)
+    train(m, train_loader, valid_loader, surface_mask)
