@@ -7,7 +7,7 @@ args = get_args()
 
 
 def split_surface_data(data):
-    assert args.parameters[0] == "effective_cloudiness"
+    assert args.parameters[0] == "effective_cloudiness_heightAboveGround_0"
     assert "pres_heightAboveSea_0" not in args.parameters
 
     data = data[:, 0, :, :]
@@ -65,7 +65,7 @@ def create_parameter_weights():
 
     w_list = []
     for par in args.parameters:
-        if par == "effective_cloudiness":
+        if par == "effective_cloudiness_heightAboveGround_0":
             w = 1.0
         else:
             name, leveln, levelv = par.split("_")
@@ -82,23 +82,22 @@ def create_parameter_weights():
 
 
 def create_static_features(ds):
-
     # create 100 element batches
     times_len = ds.sizes["time"]
     num_batches = times_len // 100
 
-    indexes = np.array_split(np.asarray(list(range(ds.sizes['time']))), num_batches)
+    indexes = np.array_split(np.asarray(list(range(ds.sizes["time"]))), num_batches)
     means = []
     squares = []
 
     for batch_idx in tqdm(indexes):
-        batch = ds.isel(time=batch_idx)[args.parameters].to_array().values # C, T, Y, X
-        means.append(np.mean(batch, axis=(1,2,3))) # C
-        squares.append(np.mean(batch**2, axis=(1,2,3))) # C
+        batch = ds.isel(time=batch_idx)[args.parameters].to_array().values  # C, T, Y, X
+        means.append(np.mean(batch, axis=(1, 2, 3)))  # C
+        squares.append(np.mean(batch**2, axis=(1, 2, 3)))  # C
 
-    mean = np.mean(np.stack(means), axis=0)  # C
+    mean = torch.tensor(np.mean(np.stack(means), axis=0))  # C
     second_moment = np.mean(np.stack(squares), axis=0)
-    std = np.sqrt(second_moment - mean**2)  # (C)
+    std = torch.tensor(np.sqrt(second_moment - mean**2))  # (C)
 
     assert mean.shape[0] == len(args.parameters)
 
