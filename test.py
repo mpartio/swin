@@ -147,8 +147,6 @@ def test(m, test_gen):
         print("Running model")
         n = len(test_gen)
         for i, (inputs, test_times) in enumerate(tqdm(test_gen)):
-            # extract "analysis data" from input
-            # analysis = np.expand_dims(inputs[:, args.n_hist - 1, ...], axis=0)
             inputs = inputs.float().to(args.device)
             output = (
                 model_forward(m, inputs, test_gen.mean, test_gen.std)
@@ -156,6 +154,7 @@ def test(m, test_gen):
                 .cpu()
                 .numpy()
             )
+
             # output = np.concatenate((analysis, output), axis=1)
             outputs.append(output)
             times.append(gen_timelist(test_times[-1]))
@@ -208,12 +207,10 @@ if __name__ == "__main__":
     test_gen = StreamingTensor(args.dataseries_file)
     predictions, times = test(m, test_gen)
 
-    filename = "out.zarr"
-    ds = create_xarray_dataset(predictions, times)
-    ds.to_zarr(filename)
+    print(predictions.shape)
+    effc = predictions[:, :, 0, ...]
 
-
-#    filename = os.path.realpath(args.model_dir).split("/")[-1] + ".npz"
-#    with open(filename, "wb") as fp:
-#        np.savez(fp, predictions, times)
-#        print(f"Wrote {len(predictions)} predictions to file '{filename}'")
+    print(np.min(effc, axis=2), np.mean(effc), np.max(effc))
+    #filename = "out.zarr"
+    #ds = create_xarray_dataset(predictions, times)
+    #ds.to_zarr(filename)
