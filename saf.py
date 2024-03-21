@@ -9,28 +9,20 @@ import torch
 from configs import get_args
 import os
 from torch.utils.data import IterableDataset
+from pangu_utils import create_parameter_weights, create_static_features
 
 args = get_args()
 
 
 def read_xarray_dataset(dirname):
     ds = xr.open_mfdataset(
-        "{}/*.zarr".format(dirname), engine="zarr", data_vars=args.parameters
+        "{}/*.zarr".format(dirname),
+        engine="zarr"
+        #        data_vars=args.parameters
+        #        + ["lsm_heightAboveGround_0", "z_heightAboveGround_0"],
     )
+
     return ds
-
-
-def get_mean_std(ds):
-    print("Pre-calculated mean and std not found, doing it now")
-    data = ds.to_array().values
-
-    if len(data.shape) == 3:
-        data = np.expand_dims(data, axis=1)
-
-    mean = np.mean(data, axis=(1, 2, 3))
-    std = np.std(data, axis=(1, 2, 3))
-
-    return mean, std
 
 
 def create_generators(train_val_split=0.8):
@@ -47,13 +39,17 @@ def create_generators(train_val_split=0.8):
         mean = torch.load("parameter_mean.pt")
         std = torch.load("parameter_std.pt")
     else:
-        mean, std = get_mean_std(ds[args.parameters])
+        print("Parameter static features not found, calculating them now... ", end="")
+        mean, std, _, _ = create_static_features(ds[args.parameters])
         torch.save(mean, "parameter_mean.pt")
         torch.save(std, "parameter_std.pt")
+        w = create_parameter_weights()
+        torch.save(w, "parameter_weights.pt")
 
-    assert len(mean) == len(
-        args.parameters
-    ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
+        assert len(mean) == len(
+            args.parameters
+        ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
+
     ds_len = len(ds["time"])
     sample_length = args.n_hist + args.n_pred
 
@@ -153,13 +149,16 @@ class SAFDataGenerator:
 
         x = x.permute(0, 2, 1).reshape(x_orig_shape)
         y = y.permute(0, 2, 1).reshape(y_orig_shape)
-
         return (x, y)
 
     def __call__(self):
         for i in range(len(self.__len())):
             elem = self.__getitem__(i)
             yield elem
+
+    def get_static_features(self, parameter):
+        assert parameter in ("lsm_heightAboveGround_0", "z_heightAboveGround_0")
+        return self.ds[parameter].values
 
 
 class SAFDataset(IterableDataset):
