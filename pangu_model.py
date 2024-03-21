@@ -7,6 +7,10 @@ from configs import get_args
 args = get_args()
 
 
+def swap_tuple(tpl):
+    return tuple(reversed(tpl))
+
+
 def crop2d(x: torch.Tensor, resolution):
     """
     Args:
@@ -908,7 +912,7 @@ class Pangu(nn.Module):
         num_static_features = 3
 
         self.patchembed2d = PatchEmbed2D(
-            img_size=args.input_size,
+            img_size=swap_tuple(args.input_size),
             patch_size=(4, 4),
             in_chans=num_surface_features + num_static_features,  # add
             embed_dim=embed_dim,
@@ -918,7 +922,7 @@ class Pangu(nn.Module):
         num_upper_level_features = 3
 
         self.patchembed3d = PatchEmbed3D(
-            img_size=(num_upper_levels,) + args.input_size,
+            img_size=(num_upper_levels,) + swap_tuple(args.input_size),
             patch_size=(2, 4, 4),
             in_chans=num_upper_level_features,
             embed_dim=embed_dim,
@@ -971,10 +975,10 @@ class Pangu(nn.Module):
         )
         # The outputs of the 2nd encoder layer and the 7th decoder layer are concatenated along the channel dimension.
         self.patchrecovery2d = PatchRecovery2D(
-            args.input_size, (4, 4), 2 * embed_dim, num_surface_features
+            swap_tuple(args.input_size), (4, 4), 2 * embed_dim, num_surface_features
         )
         self.patchrecovery3d = PatchRecovery3D(
-            (num_upper_levels,) + args.input_size,
+            (num_upper_levels,) + swap_tuple(args.input_size),
             (2, 4, 4),
             2 * embed_dim,
             num_upper_level_features,
@@ -1063,7 +1067,7 @@ class Pangu_lite(nn.Module):
         num_surface_features = 1
         num_static_features = 3
         self.patchembed2d = PatchEmbed2D(
-            img_size=args.input_size,
+            img_size=swap_tuple(args.input_size),
             patch_size=patch_size,
             in_chans=num_surface_features + num_static_features,  # add
             embed_dim=embed_dim,
@@ -1072,7 +1076,7 @@ class Pangu_lite(nn.Module):
         num_upper_levels = 2
         num_upper_level_features = 3
         self.patchembed3d = PatchEmbed3D(
-            img_size=(num_upper_levels,) + args.input_size,
+            img_size=(num_upper_levels,) + swap_tuple(args.input_size),
             patch_size=(2,) + patch_size,
             in_chans=num_upper_level_features,
             embed_dim=embed_dim,
@@ -1136,10 +1140,10 @@ class Pangu_lite(nn.Module):
         )
         # The outputs of the 2nd encoder layer and the 8th decoder layer are concatenated along the channel dimension.
         self.patchrecovery2d = PatchRecovery2D(
-            args.input_size, patch_size, 2 * embed_dim, num_surface_features
+            swap_tuple(args.input_size), patch_size, 2 * embed_dim, num_surface_features
         )
         self.patchrecovery3d = PatchRecovery3D(
-            (num_upper_levels,) + args.input_size,
+            (num_upper_levels,) + swap_tuple(args.input_size),
             (2,) + patch_size,
             2 * embed_dim,
             num_upper_level_features,
