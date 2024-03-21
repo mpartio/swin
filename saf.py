@@ -16,10 +16,7 @@ args = get_args()
 
 def read_xarray_dataset(dirname):
     ds = xr.open_mfdataset(
-        "{}/*.zarr".format(dirname),
-        engine="zarr"
-        #        data_vars=args.parameters
-        #        + ["lsm_heightAboveGround_0", "z_heightAboveGround_0"],
+        "{}/*.zarr".format(dirname), engine="zarr", data_vars="minimal"
     )
 
     return ds
@@ -114,7 +111,7 @@ class SAFDataGenerator:
         y = torch.squeeze(y, 0)
 
         if len(x.shape) > 3:
-            x = x.reshape(-1, args.input_size[0], args.input_size[1])
+            x = x.reshape(-1, args.input_size[1], args.input_size[0])
 
         assert len(x.shape) == 3, f"x shape is not (x,x,x), its {x.shape}"
         assert len(y.shape) == 3, f"y shape is not (x,x,x), its {y.shape}"
@@ -124,14 +121,14 @@ class SAFDataGenerator:
 
         assert x.shape == (
             args.n_hist * len(args.parameters),
-            args.input_size[0],
             args.input_size[1],
-        ), f"x shape is {x.shape}, should be ({args.n_hist * len(args.parameters)}, {args.input_size[0]}, {args.input_size[1]})"
+            args.input_size[0],
+        ), f"x shape is {x.shape}, should be ({args.n_hist * len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
         assert y.shape == (
             args.n_pred * len(args.parameters),
-            args.input_size[0],
             args.input_size[1],
-        ), f"y shape is {y.shape}, should be ({args.n_pred * len(args.parameters)}, {args.input_size[0]}, {args.input_size[1]})"
+            args.input_size[0],
+        ), f"y shape is {y.shape}, should be ({args.n_pred * len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
 
         # torch.Size([1, 2, 224, 224])
         # to
@@ -158,7 +155,7 @@ class SAFDataGenerator:
 
     def get_static_features(self, parameter):
         assert parameter in ("lsm_heightAboveGround_0", "z_heightAboveGround_0")
-        return self.ds[parameter].values
+        return torch.tensor(self.ds[parameter].values)
 
 
 class SAFDataset(IterableDataset):
