@@ -143,7 +143,7 @@ def setup():
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
-        num_workers=2,
+        num_workers=args.n_workers,
         pin_memory=True,
         drop_last=True,
     )
@@ -151,7 +151,7 @@ def setup():
     valid_loader = DataLoader(
         valid_ds,
         batch_size=args.batch_size,
-        num_workers=2,
+        num_workers=args.n_workers,
         pin_memory=True,
         drop_last=True,
     )
