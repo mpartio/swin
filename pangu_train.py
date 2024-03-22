@@ -132,6 +132,9 @@ def train(model, train_loader, val_loader, surface_mask):
                     input_surface, surface_mask, input_upper_air
                 )
 
+                assert (
+                    torch.isnan(output_surface).sum() == 0
+                ), "output_surface has nan values"
                 loss = calc_loss(
                     output_surface,
                     output_upper_air,
@@ -173,12 +176,14 @@ if __name__ == "__main__":
 
     lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
     z = train_ds.get_static_features("z_heightAboveGround_0")
-    soil = torch.ones_like(lsm)
+    #    soil = torch.ones_like(lsm)
+    #    surface_mask = torch.stack([lsm, z, soil]).to(args.device)
+    surface_mask = torch.stack([lsm, z]).to(args.device)
 
-    surface_mask = torch.stack([lsm, soil, z]).to(args.device)
     surface_mask = surface_mask.unsqueeze(0).repeat(args.batch_size, 1, 1, 1)
 
     args = get_args()
+
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,

@@ -909,7 +909,7 @@ class Pangu(nn.Module):
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
 
         num_surface_features = 1
-        num_static_features = 3
+        num_static_features = 2
 
         self.patchembed2d = PatchEmbed2D(
             img_size=swap_tuple(args.input_size),
@@ -1065,7 +1065,7 @@ class Pangu_lite(nn.Module):
         # patch_size = (4, 4)
 
         num_surface_features = 1
-        num_static_features = 3
+        num_static_features = 2
         self.patchembed2d = PatchEmbed2D(
             img_size=swap_tuple(args.input_size),
             patch_size=patch_size,
