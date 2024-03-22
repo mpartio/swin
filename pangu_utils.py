@@ -7,19 +7,26 @@ args = get_args()
 
 
 def split_surface_data(data):
-    assert args.parameters[0] == "effective_cloudiness_heightAboveGround_0"
-    assert "pres_heightAboveSea_0" not in args.parameters
+    indexes = []
+    for p in args.parameters:
+        if p.split("_")[-2] != "isobaricInhPa":
+            indexes.append(args.parameters.index(p))
 
-    data = data[:, 0, :, :]
+    data = data[:, indexes, :, :]
     if len(data.shape) == 3:
         data = data.unsqueeze(1)
     data = data.to(args.device)
+
     return data
 
 
 def split_upper_air_data(data):
-    levels = list(set([int(x.split("_")[-1]) for x in args.parameters[1:]]))
-    assert len(args.parameters[1:]) % 3 == 0
+    levels = []
+    for p in args.parameters:
+        if p.split("_")[-2] == "isobaricInhPa":
+            levels.append(int(p.split("_")[-1]))
+    assert len(levels) % 3 == 0
+    levels = list(set(levels))
 
     # to B C Z W H
 
