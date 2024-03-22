@@ -56,6 +56,21 @@ def split_upper_air_data(data):
     return upper_air_data
 
 
+def split_weights(weights):
+    surface_indexes, upper_air_indexes = [], []
+
+    for p in args.parameters:
+        if p.split("_")[-2] != "isobaricInhPa":
+            surface_indexes.append(args.parameters.index(p))
+        else:
+            upper_air_indexes.append(args.parameters.index(p))
+
+    surface_weights = weights[surface_indexes].to(args.device)
+    upper_air_weights = weights[upper_air_indexes].to(args.device)
+
+    return surface_weights, upper_air_weights
+
+
 def create_parameter_weights():
     def pressure_level_weight(x: float):
         # Create similar weighting to pressure level as in graphcast paper.

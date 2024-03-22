@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from pangu_model import Pangu, Pangu_lite
 from tqdm import tqdm
 from configs import get_args
-from pangu_utils import split_surface_data, split_upper_air_data
+from pangu_utils import split_surface_data, split_upper_air_data, split_weights
 
 args = get_args()
 
@@ -23,14 +23,17 @@ def calc_loss(
     criterion = nn.L1Loss(reduction="none")
 
     assert output_surface.shape == target_surface.shape
-    loss_surface = criterion(output_surface, target_surface)
-    loss_surface = loss_surface.permute(0, 2, 3, 1)
+    assert output_upper_air.shape == target_upper_air.shape
+
+    loss_surface = criterion(output_surface, target_surface).permute(
+        0, 2, 3, 1
+    )  # (B C H W) to (B H W C)
     loss_surface = torch.mean(loss_surface * weights_surface)
-    loss_upper_air = criterion(output_upper_air, target_upper_air)  # B C Z W H
-    # loss_upper_air = loss_upper_air.permute(0, 2, 3, 4, 1) * weights_upper_air
-    loss_upper_air = loss_upper_air.permute(
+
+    loss_upper_air = criterion(output_upper_air, target_upper_air).permute(
         0, 3, 4, 1, 2
-    )  # .reshape(loss_upper_air.shape[:3] + (-1,)).shape)
+    )  # (B C Z H W) to (B H W Z C)
+
     loss_upper_air = (
         loss_upper_air.reshape(loss_upper_air.shape[:3] + (-1,)) * weights_upper_air
     )
@@ -65,8 +68,7 @@ def train(model, train_loader, val_loader, surface_mask):
     # scaler = torch.cuda.amp.GradScaler()
 
     weights = torch.load("parameter_weights.pt")
-    surface_weights = weights[0].to(args.device)
-    upper_air_weights = weights[1:].to(args.device)
+    surface_weights, upper_air_weights = split_weights(weights)
 
     parameter_mean = torch.load("parameter_mean.pt")
     parameter_std = torch.load("parameter_std.pt")
@@ -96,9 +98,6 @@ def train(model, train_loader, val_loader, surface_mask):
             output_surface, output_upper_air = model(
                 input_surface, surface_mask, input_upper_air
             )
-
-            # We use the MAE loss to train the model
-            # Different weight can be applied for different fields if needed
 
             loss = calc_loss(
                 output_surface,
