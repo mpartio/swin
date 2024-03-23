@@ -55,6 +55,10 @@ def get_args():
     if type(args.parameters) == str:
         args.parameters = [args.parameters]
 
+    if args.n_workers > args.batch_size:
+        print("n_workers set to batch_size")
+        args.n_workers = args.batch_size
+
     if args.dataseries_file is None and args.dataseries_directory is None:
         raise ValueError("Either dataseries_file or dataseries_directory must be set")
 
