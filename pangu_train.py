@@ -219,8 +219,13 @@ def save_meta():
 
 
 if __name__ == "__main__":
-    m = Pangu_lite().to(args.device)
-    # m = Pangu().to(args.device)
+    if args.model_name == "pangu_lite":
+        m = Pangu_lite().to(args.device)
+    elif args.model_name == "pangu":
+        m = Pangu().to(args.device)
+    else:
+        raise ValueError("Unknown model name: {}".format(args.model_name))
+
     train_ds, valid_ds = create_generators(train_val_split=0.8)
 
     lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
