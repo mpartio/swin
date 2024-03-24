@@ -1,13 +1,12 @@
-import sys
-
 from saf import create_generators
-from torch import nn
 import torch
 from torch.utils.data import DataLoader
 from pangu_model import Pangu, Pangu_lite
 from tqdm import tqdm
 from configs import get_args
 from pangu_utils import split_surface_data, split_upper_air_data, split_weights
+import shutil
+import os
 
 args = get_args()
 
@@ -20,17 +19,30 @@ def calc_loss(
     weights_surface,
     weights_upper_air,
 ):
-    criterion = nn.L1Loss(reduction="none")
+    l1loss = torch.nn.L1Loss(reduction="none")
+    bcloss = torch.nn.BCEWithLogitsLoss(reduction="none")
 
-    assert output_surface.shape == target_surface.shape
-    assert output_upper_air.shape == target_upper_air.shape
+    assert output_surface.shape == target_surface.shape  # (B C H W)
+    assert output_upper_air.shape == target_upper_air.shape  # (B C Z H W)
 
-    loss_surface = criterion(output_surface, target_surface).permute(
+    loss_effc = bcloss(
+        output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
+    ).permute(
         0, 2, 3, 1
     )  # (B C H W) to (B H W C)
+    loss_mslp = l1loss(
+        output_surface[:, 1:2, :, :], target_surface[:, 1:2, :, :]
+    ).permute(
+        0, 2, 3, 1
+    )  # (B C H W) to (B H W C)
+
+    loss_surface = torch.cat([loss_effc, loss_mslp], dim=-1)
+    # loss_surface = l1loss(output_surface, target_surface).permute(
+    #    0, 2, 3, 1
+    # )  # (B C H W) to (B H W C)
     loss_surface = torch.mean(loss_surface * weights_surface)
 
-    loss_upper_air = criterion(output_upper_air, target_upper_air).permute(
+    loss_upper_air = l1loss(output_upper_air, target_upper_air).permute(
         0, 3, 4, 1, 2
     )  # (B C Z H W) to (B H W Z C)
 
@@ -41,8 +53,7 @@ def calc_loss(
     loss_surface = torch.mean(loss_surface)
     loss_upper_air = torch.mean(loss_upper_air)
 
-    # The weight of surface loss is 0.25
-    loss = loss_upper_air + loss_surface * 0.25
+    loss = loss_upper_air + loss_surface
 
     return loss
 
@@ -57,14 +68,13 @@ def train(model, train_loader, val_loader, surface_mask):
     # )  # used in the paper
 
     # Loss function
-    criterion = nn.L1Loss(reduction="none")
+    # criterion = nn.L1Loss(reduction="none")
 
     # training epoch
     epochs = 200
 
     best_loss = float("inf")
     epochs_since_last_improvement = 0
-    best_model = None
     # scaler = torch.cuda.amp.GradScaler()
 
     weights = torch.load("parameter_weights.pt")
@@ -95,18 +105,19 @@ def train(model, train_loader, val_loader, surface_mask):
 
             optimizer.zero_grad()
 
-            output_surface, output_upper_air = model(
-                input_surface, surface_mask, input_upper_air
-            )
+            with torch.autocast(device_type=args.device):
+                output_surface, output_upper_air = model(
+                    input_surface, surface_mask, input_upper_air
+                )
 
-            loss = calc_loss(
-                output_surface,
-                output_upper_air,
-                target_surface,
-                target_upper_air,
-                surface_weights,
-                upper_air_weights,
-            )
+                loss = calc_loss(
+                    output_surface,
+                    output_upper_air,
+                    target_surface,
+                    target_upper_air,
+                    surface_weights,
+                    upper_air_weights,
+                )
             loss.backward()
 
             optimizer.step()
@@ -168,6 +179,17 @@ def train(model, train_loader, val_loader, surface_mask):
                     break
 
 
+def save_meta():
+    os.makedirs(args.model_dir, exist_ok=True)
+
+    with open(f"{args.model_dir}/args.txt", "w") as f:
+        print(args, file=f)
+
+    shutil.copyfile("parameter_weights.pt", f"{args.model_dir}/parameter_weights.pt")
+    shutil.copyfile("parameter_mean.pt", f"{args.model_dir}/parameter_mean.pt")
+    shutil.copyfile("parameter_std.pt", f"{args.model_dir}/parameter_std.pt")
+
+
 if __name__ == "__main__":
     m = Pangu_lite().to(args.device)
     # m = Pangu().to(args.device)
@@ -209,4 +231,5 @@ if __name__ == "__main__":
 
         print("Loaded model from {}".format(args.model_dir))
 
+    save_meta()
     train(m, train_loader, valid_loader, surface_mask)
