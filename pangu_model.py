@@ -892,6 +892,21 @@ class BasicLayer(nn.Module):
         return x
 
 
+def get_resolutions(size: int):
+    def factorisation(n):
+        factors = []
+        i = int(np.sqrt(n))
+        print(i)
+        while i > 1:
+            if n % i == 0:
+                return i, n // i
+            i -= 1
+
+        return None, None
+
+    return factorisation(size)
+
+
 class Pangu(nn.Module):
     """
     Pangu A PyTorch impl of: `Pangu-Weather: A 3D High-Resolution Model for Fast and Accurate Global Weather Forecast`
@@ -908,7 +923,7 @@ class Pangu(nn.Module):
         drop_path = np.linspace(0, 0.2, 8).tolist()
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
 
-        num_surface_features = 1
+        num_surface_features = 2
         num_static_features = 2
 
         self.patchembed2d = PatchEmbed2D(
@@ -918,7 +933,7 @@ class Pangu(nn.Module):
             embed_dim=embed_dim,
         )
 
-        num_upper_levels = 2
+        num_upper_levels = 6
         num_upper_level_features = 3
 
         self.patchembed3d = PatchEmbed3D(
@@ -930,8 +945,22 @@ class Pangu(nn.Module):
 
         # original: input_resolution  = (8, 181, 360)
         #           output_resolution = (8, 91, 180)
-        input_resolution = (8, 56, 56)
-        output_resolution = (8, 32, 32)
+        # input_resolution = (8, 56, 56)
+        # output_resolution = (8, 32, 32)
+
+        in_size = (
+            (args.input_size[0] + args.input_size[0] % 4)
+            * (args.input_size[1] + args.input_size[1] % 4)
+            / 8
+            / 4
+            / 2
+        )
+
+        input_resolution, output_resolution = get_resolutions(in_size)
+        output_resolution = (8,) + (
+            int(np.ceil(input_resolution[1] / 2)),
+            int(np.ceil(input_resolution[2] / 2)),
+        )
 
         self.layer1 = BasicLayer(
             dim=embed_dim,
@@ -946,9 +975,14 @@ class Pangu(nn.Module):
             input_resolution=input_resolution,
             output_resolution=output_resolution,
         )
+
+        input_resolution, output_resolution = swap_tuple(
+            (input_resolution, output_resolution)
+        )
+
         self.layer2 = BasicLayer(
             dim=embed_dim * 2,
-            input_resolution=output_resolution,
+            input_resolution=input_resolution,
             depth=6,
             num_heads=num_heads[1],
             window_size=window_size,
@@ -956,18 +990,18 @@ class Pangu(nn.Module):
         )
         self.layer3 = BasicLayer(
             dim=embed_dim * 2,
-            input_resolution=output_resolution,
+            input_resolution=input_resolution,
             depth=6,
             num_heads=num_heads[2],
             window_size=window_size,
             drop_path=drop_path[2:],
         )
         self.upsample = UpSample(
-            embed_dim * 2, embed_dim, output_resolution, input_resolution
+            embed_dim * 2, embed_dim, input_resolution, output_resolution
         )
         self.layer4 = BasicLayer(
             dim=embed_dim,
-            input_resolution=input_resolution,
+            input_resolution=output_resolution,
             depth=2,
             num_heads=num_heads[3],
             window_size=window_size,
@@ -1062,9 +1096,8 @@ class Pangu_lite(nn.Module):
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
 
         patch_size = (8, 8)
-        # patch_size = (4, 4)
 
-        num_surface_features = 1
+        num_surface_features = 2
         num_static_features = 2
         self.patchembed2d = PatchEmbed2D(
             img_size=swap_tuple(args.input_size),
@@ -1073,7 +1106,7 @@ class Pangu_lite(nn.Module):
             embed_dim=embed_dim,
         )
 
-        num_upper_levels = 2
+        num_upper_levels = 6
         num_upper_level_features = 3
         self.patchembed3d = PatchEmbed3D(
             img_size=(num_upper_levels,) + swap_tuple(args.input_size),
@@ -1082,12 +1115,23 @@ class Pangu_lite(nn.Module):
             embed_dim=embed_dim,
         )
 
-        # original: input_resolution  = (8, 91, 360)
-        #           output_resolution = (8, 46, 90)
-        input_resolution = (8, 14, 14)  # 224x224
-        input_resolution = (8, 28, 28)
-        output_resolution = (8, 8, 8)  # 224x224
-        output_resolution = (8, 14, 14)
+        input_resolution = (8, 32, 49)  # 448x448 all parameters
+        output_resolution = (8, 16, 25)  # 448x448 all parameters
+        input_resolution = (8, 67, 119)  # 1069x949 all parameters
+        output_resolution = (8, 34, 60)  # 1069x949 all parameters
+
+        in_size = (
+            (args.input_size[0] + args.input_size[0] % 8)
+            * (args.input_size[1] + args.input_size[1] % 8)
+            / 8
+            / 8
+            / 2
+        )
+        input_resolution = (8,) + get_resolutions(in_size)
+        output_resolution = (8,) + (
+            int(np.ceil(input_resolution[1] / 2)),
+            int(np.ceil(input_resolution[2] / 2)),
+        )
 
         self.layer1 = BasicLayer(
             dim=embed_dim,
@@ -1103,8 +1147,10 @@ class Pangu_lite(nn.Module):
             output_resolution=output_resolution,
         )
 
-        # original: input_resolution = (8, 46, 90)
-        input_resolution = output_resolution
+        input_resolution, output_resolution = swap_tuple(
+            (input_resolution, output_resolution)
+        )
+
         self.layer2 = BasicLayer(
             dim=embed_dim * 2,
             input_resolution=input_resolution,
@@ -1121,18 +1167,14 @@ class Pangu_lite(nn.Module):
             window_size=window_size,
             drop_path=drop_path[2:],
         )
-        # original: output_resolution = (8, 91, 180)
-        output_resolution = (8, 14, 14)  # 224x224
-        output_resolution = (8, 28, 28)
 
         self.upsample = UpSample(
             embed_dim * 2, embed_dim, input_resolution, output_resolution
         )
 
-        input_resolution = output_resolution
         self.layer4 = BasicLayer(
             dim=embed_dim,
-            input_resolution=input_resolution,
+            input_resolution=output_resolution,
             depth=2,
             num_heads=num_heads[3],
             window_size=window_size,
