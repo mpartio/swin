@@ -11,6 +11,26 @@ import os
 args = get_args()
 
 
+def bimodal_loss(y_pred, y_true):
+    weight = 0.5
+
+    # Calculate distances to modes
+    distance_to_mode1 = torch.abs(y_pred - 0.0)
+    distance_to_mode2 = torch.abs(y_pred - 1.0)
+
+    # Determine closer mode and calculate base loss (MSE)
+    closer_to_mode1 = torch.lt(distance_to_mode1, distance_to_mode2)
+    base_loss = (y_true - y_pred) ** 2
+
+    # Apply additional weight to errors closer to modes
+    weighted_loss = torch.where(
+        closer_to_mode1,
+        weight * base_loss / distance_to_mode1,
+        weight * base_loss / distance_to_mode2,
+    )
+    return weighted_loss
+
+
 def calc_loss(
     output_surface,
     output_upper_air,
@@ -25,7 +45,12 @@ def calc_loss(
     assert output_surface.shape == target_surface.shape  # (B C H W)
     assert output_upper_air.shape == target_upper_air.shape  # (B C Z H W)
 
-    loss_effc = bcloss(
+    # loss_effc = bcloss(
+    #    output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
+    # ).permute(
+    #    0, 2, 3, 1
+    # )  # (B C H W) to (B H W C)
+    loss_effc = bimodal_loss(
         output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
     ).permute(
         0, 2, 3, 1
@@ -63,15 +88,10 @@ def train(model, train_loader, val_loader, surface_mask):
     # Prepare for the optimizer and scheduler
     optimizer = torch.optim.Adam(m.parameters(), lr=5e-4, weight_decay=3e-6)
 
-    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #    optimizer, 10, eta_min=0, last_epoch=-1, verbose=False
-    # )  # used in the paper
-
-    # Loss function
-    # criterion = nn.L1Loss(reduction="none")
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 20)
 
     # training epoch
-    epochs = 200
+    epochs = 300
 
     best_loss = float("inf")
     epochs_since_last_improvement = 0
@@ -88,13 +108,15 @@ def train(model, train_loader, val_loader, surface_mask):
     surface_std = parameter_std[0].to(args.device)
     upper_std = parameter_std[1:].to(args.device)
 
+    current_lr = lr_scheduler.get_last_lr()[0]
+    print(f"Initial learning rate: {current_lr}")
     # Train a single Pangu-Weather model
-    for i in range(epochs + 1):
+    for epoch in range(epochs):
         epoch_loss = 0.0
-        print(f"Epoch {i}")
+        print(f"Epoch {epoch}")
         model.train()
 
-        for id, train_data in enumerate(tqdm(train_loader)):
+        for i, train_data in enumerate(tqdm(train_loader)):
             # B C W H
             input_all, target_all = train_data
             input_surface = split_surface_data(input_all)
@@ -123,13 +145,19 @@ def train(model, train_loader, val_loader, surface_mask):
             optimizer.step()
             epoch_loss += loss.item()
 
+            lr_scheduler.step(epoch + i / len(train_loader))
+
+            if lr_scheduler.get_last_lr()[0] != current_lr:
+                current_lr = lr_scheduler.get_last_lr()[0]
+                print(f"Learning rate changed to {current_lr}")
+
         epoch_loss /= len(train_loader)
 
         # Begin to validate
         with torch.no_grad():
             model.eval()
             val_loss = 0.0
-            for id, val_data in enumerate(tqdm(val_loader)):
+            for i, val_data in enumerate(tqdm(val_loader)):
                 input_all, target_all = val_data
 
                 input_surface = split_surface_data(input_all)
