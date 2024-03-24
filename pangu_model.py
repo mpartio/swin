@@ -899,7 +899,7 @@ def get_resolutions(size: int):
         print(i)
         while i > 1:
             if n % i == 0:
-                return i, n // i
+                return i, int(n // i)
             i -= 1
 
         return None, None
