@@ -12,6 +12,8 @@ args = get_args()
 
 
 def bimodal_loss(y_pred, y_true):
+    # making weight larger will penalize errors closer to modes more
+    # making weight smaller will make loss function more like MSE
     weight = 0.5
 
     # Calculate distances to modes
@@ -90,6 +92,8 @@ def train(model, train_loader, val_loader, surface_mask):
 
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 20)
 
+    scaler = torch.cuda.amp.GradScaler()
+
     # training epoch
     epochs = 300
 
@@ -127,7 +131,7 @@ def train(model, train_loader, val_loader, surface_mask):
 
             optimizer.zero_grad()
 
-            with torch.autocast(device_type=args.device):
+            with torch.autocast(device_type="cuda"):
                 output_surface, output_upper_air = model(
                     input_surface, surface_mask, input_upper_air
                 )
@@ -140,14 +144,16 @@ def train(model, train_loader, val_loader, surface_mask):
                     surface_weights,
                     upper_air_weights,
                 )
-            loss.backward()
 
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
             epoch_loss += loss.item()
 
             lr_scheduler.step(epoch + i / len(train_loader))
 
-            if lr_scheduler.get_last_lr()[0] != current_lr:
+            if current_lr - lr_scheduler.get_last_lr()[0] > 0.00001:
                 current_lr = lr_scheduler.get_last_lr()[0]
                 print(f"Learning rate changed to {current_lr}")
 
@@ -182,6 +188,7 @@ def train(model, train_loader, val_loader, surface_mask):
                     upper_air_weights,
                 )
 
+                assert torch.isnan(loss).sum() == 0, "validation loss has nan values"
                 val_loss += loss.item()
 
             val_loss /= len(val_loader)
