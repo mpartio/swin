@@ -12,25 +12,38 @@ args = get_args()
 
 
 def bimodal_loss(y_pred, y_true):
-    # making weight larger will penalize errors closer to modes more
-    # making weight smaller will make loss function more like MSE
-    weight = 0.5
-
-    # Calculate distances to modes
-    distance_to_mode1 = torch.abs(y_pred - 0.0)
-    distance_to_mode2 = torch.abs(y_pred - 1.0)
-
-    # Determine closer mode and calculate base loss (MSE)
-    closer_to_mode1 = torch.lt(distance_to_mode1, distance_to_mode2)
-    base_loss = (y_true - y_pred) ** 2
-
-    # Apply additional weight to errors closer to modes
-    weighted_loss = torch.where(
-        closer_to_mode1,
-        weight * base_loss / distance_to_mode1,
-        weight * base_loss / distance_to_mode2,
+    # Parameters
+    weight = (
+        0.5  # Adjusting this weight can penalize or favor errors closer to the modes
     )
-    return weighted_loss
+    scale_factor = 0.1  # Scaling factor for the MSE loss
+
+    # Calculate absolute distances to both modes
+    min_distance = (
+        0.1  # Minimum distance threshold to avoid division by very small numbers
+    )
+
+    distance_to_mode1 = torch.max(torch.abs(y_pred - 0.0), torch.tensor(min_distance))
+    distance_to_mode2 = torch.max(torch.abs(y_pred - 1.0), torch.tensor(min_distance))
+
+    # Determine which mode is closer for each prediction
+    # Closer to mode 1 will be 1, and closer to mode 2 will be 0
+    closer_to_mode1 = (
+        distance_to_mode1 < distance_to_mode2
+    ).float()  # Convert boolean mask to float
+    closer_to_mode2 = 1 - closer_to_mode1  # Inverse the mask for mode 2
+
+    # Base loss (Mean Squared Error)
+    mse_loss = scale_factor * (y_true - y_pred) ** 2
+
+    # Adjusted loss based on distance to the closest mode
+    loss_mode1 = weight * mse_loss / distance_to_mode1
+    loss_mode2 = weight * mse_loss / distance_to_mode2
+
+    # Apply conditional logic to calculate the final loss
+    final_loss = closer_to_mode1 * loss_mode1 + closer_to_mode2 * loss_mode2
+
+    return final_loss
 
 
 def calc_loss(
@@ -42,15 +55,15 @@ def calc_loss(
     weights_upper_air,
 ):
     l1loss = torch.nn.L1Loss(reduction="none")
-    bcloss = torch.nn.BCEWithLogitsLoss(reduction="none")
+    # bcloss = torch.nn.BCEWithLogitsLoss(reduction="none")
 
     assert output_surface.shape == target_surface.shape  # (B C H W)
     assert output_upper_air.shape == target_upper_air.shape  # (B C Z H W)
 
     # loss_effc = bcloss(
-    #    output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
+    #   output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
     # ).permute(
-    #    0, 2, 3, 1
+    #   0, 2, 3, 1
     # )  # (B C H W) to (B H W C)
     loss_effc = bimodal_loss(
         output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
@@ -85,8 +98,18 @@ def calc_loss(
     return loss
 
 
+def extract_effc(data, mean, std):
+    effc = data[:, 0:1, :, :]
+    effc = effc.permute(0, 2, 3, 1)
+    effc = (effc * std) + mean
+    effc = effc.permute(0, 3, 1, 2)
+
+    return effc
+
+
 def train(model, train_loader, val_loader, surface_mask):
     """Training code"""
+
     # Prepare for the optimizer and scheduler
     optimizer = torch.optim.Adam(m.parameters(), lr=5e-4, weight_decay=3e-6)
 
@@ -107,10 +130,11 @@ def train(model, train_loader, val_loader, surface_mask):
     parameter_mean = torch.load("parameter_mean.pt")
     parameter_std = torch.load("parameter_std.pt")
 
+    global surface_mean, surface_std
     surface_mean = parameter_mean[0].to(args.device)
-    upper_mean = parameter_mean[1:].to(args.device)
+    # upper_mean = parameter_mean[1:].to(args.device)
     surface_std = parameter_std[0].to(args.device)
-    upper_std = parameter_std[1:].to(args.device)
+    # upper_std = parameter_std[1:].to(args.device)
 
     current_lr = lr_scheduler.get_last_lr()[0]
     print(f"Initial learning rate: {current_lr}")
@@ -129,21 +153,28 @@ def train(model, train_loader, val_loader, surface_mask):
             target_surface = split_surface_data(target_all)
             target_upper_air = split_upper_air_data(target_all)
 
+            effc = extract_effc(target_surface, surface_mean, surface_std)
+            effc = effc / 100
+
             optimizer.zero_grad()
 
-            with torch.autocast(device_type="cuda"):
+            with torch.autocast(device_type="cuda", dtype=torch.float32):
                 output_surface, output_upper_air = model(
                     input_surface, surface_mask, input_upper_air
                 )
+                p_effc = extract_effc(output_surface, surface_mean, surface_std)
+                p_effc = torch.sigmoid(p_effc)
 
-                loss = calc_loss(
-                    output_surface,
-                    output_upper_air,
-                    target_surface,
-                    target_upper_air,
-                    surface_weights,
-                    upper_air_weights,
-                )
+                loss = bimodal_loss(p_effc, effc).mean()
+
+                # loss = calc_loss(
+                #    output_surface,
+                #    output_upper_air,
+                #    target_surface,
+                #    target_upper_air,
+                #    surface_weights,
+                #    upper_air_weights,
+                # )
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -153,7 +184,7 @@ def train(model, train_loader, val_loader, surface_mask):
 
             lr_scheduler.step(epoch + i / len(train_loader))
 
-            if current_lr - lr_scheduler.get_last_lr()[0] > 0.00001:
+            if current_lr - lr_scheduler.get_last_lr()[0] > 0.00005:
                 current_lr = lr_scheduler.get_last_lr()[0]
                 print(f"Learning rate changed to {current_lr}")
 
@@ -179,14 +210,22 @@ def train(model, train_loader, val_loader, surface_mask):
                 assert (
                     torch.isnan(output_surface).sum() == 0
                 ), "output_surface has nan values"
-                loss = calc_loss(
-                    output_surface,
-                    output_upper_air,
-                    target_surface,
-                    target_upper_air,
-                    surface_weights,
-                    upper_air_weights,
-                )
+
+                effc = extract_effc(target_surface, surface_mean, surface_std)
+                effc = effc / 100
+
+                p_effc = extract_effc(output_surface, surface_mean, surface_std)
+                p_effc = torch.sigmoid(p_effc)
+
+                loss = bimodal_loss(p_effc, effc).mean()
+                #                loss = calc_loss(
+                #                    output_surface,
+                #                    output_upper_air,
+                #                    target_surface,
+                #                    target_upper_air,
+                #                    surface_weights,
+                #                    upper_air_weights,
+                #                )
 
                 assert torch.isnan(loss).sum() == 0, "validation loss has nan values"
                 val_loss += loss.item()
@@ -237,8 +276,6 @@ if __name__ == "__main__":
 
     lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
     z = train_ds.get_static_features("z_heightAboveGround_0")
-    #    soil = torch.ones_like(lsm)
-    #    surface_mask = torch.stack([lsm, z, soil]).to(args.device)
     surface_mask = torch.stack([lsm, z]).to(args.device)
 
     surface_mask = surface_mask.unsqueeze(0).repeat(args.batch_size, 1, 1, 1)
