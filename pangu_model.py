@@ -923,7 +923,7 @@ class Pangu(nn.Module):
         drop_path = np.linspace(0, 0.2, 8).tolist()
         # In addition, three constant masks(the topography mask, land-sea mask and soil type mask)
 
-        num_surface_features = 2
+        num_surface_features = 10
         num_static_features = 2
 
         self.patchembed2d = PatchEmbed2D(
@@ -934,7 +934,7 @@ class Pangu(nn.Module):
         )
 
         num_upper_levels = 6
-        num_upper_level_features = 3
+        num_upper_level_features = 5
 
         self.patchembed3d = PatchEmbed3D(
             img_size=(num_upper_levels,) + swap_tuple(args.input_size),
@@ -949,14 +949,12 @@ class Pangu(nn.Module):
         # output_resolution = (8, 32, 32)
 
         in_size = (
-            (args.input_size[0] + args.input_size[0] % 4)
-            * (args.input_size[1] + args.input_size[1] % 4)
-            / 8
-            / 4
-            / 2
+            (args.input_size[0] + (4 - args.input_size[0] % 4))
+            * (args.input_size[1] + (4 - args.input_size[1] % 4))
+            / 192
         )
 
-        input_resolution, output_resolution = get_resolutions(in_size)
+        input_resolution = (8,) + get_resolutions(in_size)
         output_resolution = (8,) + (
             int(np.ceil(input_resolution[1] / 2)),
             int(np.ceil(input_resolution[2] / 2)),
@@ -1115,18 +1113,17 @@ class Pangu_lite(nn.Module):
             embed_dim=embed_dim,
         )
 
-        input_resolution = (8, 32, 49)  # 448x448 all parameters
-        output_resolution = (8, 16, 25)  # 448x448 all parameters
-        input_resolution = (8, 67, 119)  # 1069x949 all parameters
-        output_resolution = (8, 34, 60)  # 1069x949 all parameters
+        # input_resolution = (9, 32, 49)  # 448x448 all parameters
+        # output_resolution = (8, 16, 25)  # 448x448 all parameters
+        # input_resolution = (8, 67, 119)  # 1069x949 all parameters
+        # output_resolution = (8, 34, 60)  # 1069x949 all parameters
 
         in_size = (
-            (args.input_size[0] + args.input_size[0] % 8)
-            * (args.input_size[1] + args.input_size[1] % 8)
-            / 8
-            / 8
-            / 2
+            (args.input_size[0] + (8 - args.input_size[0] % 8))
+            * (args.input_size[1] + (8 - args.input_size[1] % 8))
+            / 192
         )
+
         input_resolution = (8,) + get_resolutions(in_size)
         output_resolution = (8,) + (
             int(np.ceil(input_resolution[1] / 2)),

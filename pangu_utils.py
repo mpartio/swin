@@ -32,20 +32,19 @@ def split_upper_air_data(data):
 
     d = {item: idx for idx, item in enumerate(args.parameters)}
 
-    upper_air_data = None
     for level in levels:
-        params = [f"{x}_isobaricInhPa_{level}" for x in ["u", "v", "z"]]
+        params = [f"{x}_isobaricInhPa_{level}" for x in ["t", "r", "u", "v", "z"]]
         indexes = [d.get(x) for x in params]
         if upper_air_data is None:
             upper_air_data = data[:, indexes, :, :].reshape(
-                data.shape[0], 3, 1, data.shape[2], data.shape[3]
+                data.shape[0], 5, 1, data.shape[2], data.shape[3]
             )
         else:
             upper_air_data = torch.cat(
                 (
                     upper_air_data,
                     data[:, indexes, :, :].reshape(
-                        data.shape[0], 3, 1, data.shape[2], data.shape[3]
+                        data.shape[0], 5, 1, data.shape[2], data.shape[3]
                     ),
                 ),
                 dim=2,
