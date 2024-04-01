@@ -87,15 +87,18 @@ def create_parameter_weights():
 
     w_list = []
     for par in args.parameters:
-        if par == "effective_cloudiness_heightAboveGround_0":
-            w = 1.0
+        if leveln == "isobaricInhPa":
+            w = pressure_level_weight(int(levelv))
+            if name in ("u", "v"):
+                w = w * 0.5
         else:
-            name, leveln, levelv = par.split("_")
-            if leveln == "isobaricInhPa":
-                w = pressure_level_weight(int(levelv))
-                if name in ("u", "v"):
-                    w = w * 0.5
-            elif name == "pres" and leveln == "heightAboveSea":
+            if name == "pres" and leveln == "heightAboveSea":
+                w = 1.0
+            elif name in ("ucorr", "vcorr"):
+                w = 0.5
+            elif name in ("tcorr", "rcorr", "fgcorr", "effective-cloudiness"):
+                w = 1.0
+            else:
                 w = 0.2
 
         w_list.append(w)
