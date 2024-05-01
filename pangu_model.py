@@ -896,7 +896,6 @@ def get_resolutions(size: int):
     def factorisation(n):
         factors = []
         i = int(np.sqrt(n))
-        print(i)
         while i > 1:
             if n % i == 0:
                 return i, int(n // i)
@@ -948,10 +947,12 @@ class Pangu(nn.Module):
         # input_resolution = (8, 56, 56)
         # output_resolution = (8, 32, 32)
 
-        in_size = (
-            (args.input_size[0] + (4 - args.input_size[0] % 4))
-            * (args.input_size[1] + (4 - args.input_size[1] % 4))
-            / 192
+        x_height = args.input_size[1] + (4 - args.input_size[1] % 4)
+        x_width = args.input_size[0] + (4 - args.input_size[0] % 4)
+
+        in_size = np.ceil(x_height * x_width * 12
+            * (1 + num_upper_levels // 2)
+            / 192 / 8
         )
 
         input_resolution = (8,) + get_resolutions(in_size)
