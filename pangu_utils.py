@@ -31,6 +31,7 @@ def split_upper_air_data(data):
     # to B C Z W H
 
     d = {item: idx for idx, item in enumerate(args.parameters)}
+    upper_air_data = None
 
     for level in levels:
         params = [f"{x}_isobaricInhPa_{level}" for x in ["t", "r", "u", "v", "z"]]
