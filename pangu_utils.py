@@ -87,6 +87,7 @@ def create_parameter_weights():
 
     w_list = []
     for par in args.parameters:
+        name, leveln, levelv = par.split("_")
         if leveln == "isobaricInhPa":
             w = pressure_level_weight(int(levelv))
             if name in ("u", "v"):
