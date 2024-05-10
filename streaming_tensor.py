@@ -2,6 +2,7 @@ import xarray as xr
 import zarr
 import torch
 import numpy as np
+import einops
 
 
 class StreamingTensor:
@@ -10,6 +11,7 @@ class StreamingTensor:
         self.ds = xr.open_zarr(file)
         self.i = 0
 
+        print("Loading mean and std from {}".format(model_dir))
         self.mean = torch.load(f"{model_dir}/parameter_mean.pt")  # .numpy()
         self.std = torch.load(f"{model_dir}/parameter_std.pt")  # .numpy()
         self.parameters = parameters
@@ -17,7 +19,9 @@ class StreamingTensor:
 
         assert len(self.mean) == len(
             self.parameters
-        ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
+        ), "Error loading files from {}: mean and parameters length mismatch: expected {}, found {}. Either specify correct parameters or remove parameter_mean.pt and parameter_std.pt to recalculate means".format(
+            model_dir, len(self.parameters), len(self.mean)
+        )
 
     def __next__(self):
         indexes = np.arange(self.i, self.i + self.n_hist)
@@ -26,16 +30,18 @@ class StreamingTensor:
         test_data = (
             self.ds.isel(time=indexes)[self.parameters].to_array().values
         )  # (C, B, H, W)
+
         test_data = torch.Tensor(test_data)
         test_times = self.ds["time"][indexes].values
 
         # move channels to end so that data can be normalized
+        _, _, ny, nx = test_data.shape
 
-        test_data = test_data.permute(1, 2, 3, 0)  # (B, H, W, C)
+        test_data = einops.rearrange(test_data, "c b h w -> b (h w) c")
         test_data = (test_data - self.mean) / self.std
 
         # return back to normal order
-        test_data = test_data.permute(0, 3, 1, 2)  # (B, C, H, W)
+        test_data = einops.rearrange(test_data, "b (h w) c -> b c h w", h=ny, w=nx)
 
         if test_data.shape[0] < self.n_hist:
             raise StopIteration
@@ -44,7 +50,6 @@ class StreamingTensor:
 
         self.i += 1
         return test_data, test_times
-        # return torch.Tensor(test_data), test_times
 
     def __iter__(self):
         return self
