@@ -1,6 +1,11 @@
+import numpy as np
+import datetime
+import torch
+import eccodes as ecc
+import os
+import einops
 from saf import create_generators
 from torch import nn
-import torch
 from torch.utils.data import DataLoader
 from pangu_model import Pangu, Pangu_lite
 from tqdm import tqdm
@@ -8,9 +13,6 @@ from configs import get_args
 from streaming_tensor import StreamingTensor
 from pangu_utils import split_surface_data, split_upper_air_data, split_weights
 from io import BytesIO
-import matplotlib.pyplot as plt
-import numpy as np
-import datetime
 
 args = get_args()
 
@@ -18,11 +20,7 @@ args = get_args()
 def save_grib(output_data, times, filepath, grib_options=None):
     assert filepath[-5:] == "grib2"
     bio = BytesIO()
-    times = times[0]
-    analysistime = datetime.datetime.strptime(
-        times[0], "%Y%m%dT%H%M%S"
-    )  # utcfromtimestamp(int(times[0]) / 1e9)
-    # (1, 6, 268, 238, 39)
+    analysistime = times[0]
 
     # T, C, H, W
     output_data = output_data[0]  # surface data only
@@ -31,8 +29,9 @@ def save_grib(output_data, times, filepath, grib_options=None):
         len(times) == output_data.shape[0]
     ), "times ({}) do not match data ({})".format(len(times), output_data.shape[0])
 
+    params = args.parameters
     param_keys = {
-        "gust": {
+        "fgcorr_heightAboveGround_10": {
             "discipline": 0,
             "parameterCategory": 2,
             "parameterNumber": 22,
@@ -42,122 +41,120 @@ def save_grib(output_data, times, filepath, grib_options=None):
             "level": 10,
             "lengthOfTimeRange": 1,
         },
-        "mld": {
+        "mld_heightAboveGround_0": {
             "discipline": 0,
             "parameterCategory": 3,
             "parameterNumber": 18,
             "typeOfFirstFixedSurface": 103,
             "level": 0,
         },
-        "pres": {
+        "pres_heightAboveSea_0": {
+            "discipline": 0,
+            "parameterCategory": 3,
+            "parameterNumber": 0,
+            "typeOfFirstFixedSurface": 101,
+            "level": 0,
+        },
+        "pres_heightAboveGround_0": {
             "discipline": 0,
             "parameterCategory": 3,
             "parameterNumber": 0,
             "typeOfFirstFixedSurface": 103,
             "level": 0,
         },
-        "r": {
+        "r_heightAboveGround_2": {
             "discipline": 0,
             "parameterCategory": 1,
             "parameterNumber": 1,
-            "typeOfFirstFixedSurface": 100,
-            "level": 1000,
+            "typeOfFirstFixedSurface": 103,
+            "level": 2,
         },
-        "t": {
+        "rcorr_heightAboveGround_2": {
+            "discipline": 0,
+            "parameterCategory": 1,
+            "parameterNumber": 1,
+            "typeOfFirstFixedSurface": 103,
+            "level": 2,
+        },
+        "t_heightAboveGround_0": {
             "discipline": 0,
             "parameterCategory": 0,
             "parameterNumber": 0,
-            "typeOfFirstFixedSurface": 100,
-            "level": 1000,
+            "typeOfFirstFixedSurface": 103,
+            "level": 0,
         },
-        "tcc": {
+        "t_heightAboveGround_2": {
+            "discipline": 0,
+            "parameterCategory": 0,
+            "parameterNumber": 0,
+            "typeOfFirstFixedSurface": 103,
+            "level": 2,
+        },
+        "tcorr_heightAboveGround_2": {
+            "discipline": 0,
+            "parameterCategory": 0,
+            "parameterNumber": 0,
+            "typeOfFirstFixedSurface": 103,
+            "level": 2,
+        },
+        "effective-cloudiness_heightAboveGround_0": {
             "discipline": 0,
             "parameterCategory": 6,
             "parameterNumber": 1,
             "typeOfFirstFixedSurface": 103,
             "level": 0,
         },
-        "u": {
+        "u_isobaricInhPa": {
             "discipline": 0,
             "parameterCategory": 2,
             "parameterNumber": 2,
             "typeOfFirstFixedSurface": 100,
-            "level": 1000,
         },
-        "v": {
+        "v_isobaricInhPa": {
+            "discipline": 0,
+            "parameterCategory": 2,
+            "parameterNumber": 2,
+            "typeOfFirstFixedSurface": 100,
+        },
+        "ucorr_heightAboveGround_10": {
+            "discipline": 0,
+            "parameterCategory": 2,
+            "parameterNumber": 2,
+            "typeOfFirstFixedSurface": 103,
+            "level": 10,
+        },
+        "vcorr_heightAboveGround_10": {
             "discipline": 0,
             "parameterCategory": 2,
             "parameterNumber": 3,
-            "typeOfFirstFixedSurface": 100,
-            "level": 1000,
+            "typeOfFirstFixedSurface": 103,
+            "level": 10,
         },
-        "z": {
+        "t_isobaricInhPa": {
+            "discipline": 0,
+            "parameterCategory": 0,
+            "parameterNumber": 0,
+            "typeOfFirstFixedSurface": 100,
+        },
+        "r_isobaricInhPa": {
+            "discipline": 0,
+            "parameterCategory": 1,
+            "parameterNumber": 1,
+            "typeOfFirstFixedSurface": 100,
+        },
+        "z_isobaricInhPa": {
             "discipline": 0,
             "parameterCategory": 3,
             "parameterNumber": 4,
             "typeOfFirstFixedSurface": 100,
-            "level": 1000,
         },
     }
 
-    def pk(param, override={}):
-        x = param_keys[param].copy()
-        if override is not None:
-            for k, v in override.items():
-                x[k] = v
-        return x
-
-    grib_keys = [
-        pk("tcc"),
-        pk("gust"),
-        pk("mld"),
-        pk("pres"),
-        pk("pres", {"typeOfFirstFixedSurface": 101}),
-        pk("r"),
-        pk("r", {"level": 300}),
-        pk("r", {"level": 500}),
-        pk("r", {"level": 700}),
-        pk("r", {"level": 850}),
-        pk("r", {"level": 925}),
-        pk("r", {"typeOfFirstFixedSurface": 103, "level": 2}),
-        pk("t", {"typeOfFirstFixedSurface": 103, "level": 0}),
-        pk("t"),
-        pk("t", {"level": 300}),
-        pk("t", {"level": 500}),
-        pk("t", {"level": 700}),
-        pk("t", {"level": 850}),
-        pk("t", {"level": 925}),
-        pk("t", {"typeOfFirstFixedSurface": 103, "level": 2}),
-        pk("u"),
-        pk("u", {"level": 300}),
-        pk("u", {"level": 500}),
-        pk("u", {"level": 700}),
-        pk("u", {"level": 850}),
-        pk("u", {"level": 925}),
-        pk("u", {"typeOfFirstFixedSurface": 103, "level": 10}),
-        pk("v"),
-        pk("v", {"level": 300}),
-        pk("v", {"level": 500}),
-        pk("v", {"level": 700}),
-        pk("v", {"level": 850}),
-        pk("v", {"level": 925}),
-        pk("v", {"typeOfFirstFixedSurface": 103, "level": 10}),
-        pk("z"),
-        pk("z", {"level": 300}),
-        pk("z", {"level": 500}),
-        pk("z", {"level": 700}),
-        pk("z", {"level": 850}),
-        pk("z", {"level": 925}),
-    ]
-    assert len(grib_keys) == output_data.shape[-1]
     for i in range(len(times)):
-        forecasttime = analysistime + dt.timedelta(hours=i)
+        forecasttime = analysistime + datetime.timedelta(hours=i)
 
-        for j in range(0, output_data.shape[-1]):
-            data = output_data[0, i, :, :, j]
-
-            if j == 0:
-                data = np.clip(data, 0, 100)
+        for j in range(0, output_data.shape[1]):
+            data = output_data[i, j, :, :]
 
             h = ecc.codes_grib_new_from_samples("regular_ll_sfc_grib2")
             ecc.codes_set(h, "gridType", "lambert")
@@ -183,12 +180,18 @@ def save_grib(output_data, times, filepath, grib_options=None):
             ecc.codes_set(h, "typeOfGeneratingProcess", 2)  # deterministic forecast
             ecc.codes_set(h, "typeOfProcessedData", 2)  # analysis and forecast products
 
-            for k, v in grib_keys[j].items():
+            param = params[j]
+
+            if "isobaricInhPa" in param:
+                ecc.codes_set(h, "level", int(param.split("_")[-1]))
+
+                param = "_".join(param.split("_")[:-1])
+            for k, v in param_keys[param].items():
                 ecc.codes_set(h, k, v)
 
             forecasthour = int((forecasttime - analysistime).total_seconds() / 3600)
 
-            if j == 0:
+            if param.startswith("fgcorr"):
                 forecasthour -= 1
 
             ecc.codes_set(h, "forecastTime", forecasthour)
@@ -214,15 +217,10 @@ def save_grib(output_data, times, filepath, grib_options=None):
 
 
 def model_forward(m, input_surface, surface_mask, input_upper_air, mean, std):
-    for i in range(args.n_hist):
-        # plot first channel only
-        plt.imshow(np.squeeze(input_surface.cpu().numpy()[0, 0, ...]), cmap="gray_r")
-        plt.savefig("images/inputs_{:02d}.png".format(i))
 
     outputs_surface, outputs_upper_air = [], []
 
     for i in tqdm(range(args.n_pred)):
-        # B, C, H, W
         output_surface, output_upper_air = m(
             input_surface, surface_mask, input_upper_air
         )
@@ -230,27 +228,20 @@ def model_forward(m, input_surface, surface_mask, input_upper_air, mean, std):
         input_surface = output_surface
         input_upper_air = output_upper_air
 
-        output_surface = output_surface.detach()  # B C H W
-        output_upper_air = output_upper_air.detach().squeeze(2)  # B C Z H W
+        # import matplotlib.pyplot as plt
 
-        # de-normalize
-        output_surface = torch.permute(output_surface, (0, 2, 3, 1))  # B H W C
-        output_surface = output_surface * std + mean
-        output_surface = torch.permute(output_surface, (0, 3, 1, 2))  # B C H W
+        # plt.imshow(np.squeeze(output_surface[:, 0, :, :]), cmap="gray_r")
+        # plt.show()
+        # plt.savefig("images/outputs_{:02d}.png".format(i))
 
-        output_surface = output_surface.cpu()
-        output_upper_air = output_upper_air.cpu()
-        plt.imshow(np.squeeze(output_surface[:, 0, :, :]), cmap="gray_r")
-        plt.savefig("images/outputs_{:02d}.png".format(i))
+        outputs_surface.append(output_surface)
+        outputs_upper_air.append(output_upper_air)
 
-        outputs_surface.append((output_surface.numpy()))
-        outputs_upper_air.append((output_upper_air.numpy()))
+        input_surface = output_surface
+        input_upper_air = output_upper_air
 
-        # x = x[:, 1:, ...]
-        # x = torch.cat((x, y), dim=1)
-
-    outputs_surface = np.stack(outputs_surface).squeeze(1)
-    outputs_upper_air = np.stack(outputs_upper_air).squeeze(1)
+    outputs_surface = torch.stack(outputs_surface).squeeze(1)
+    outputs_upper_air = torch.stack(outputs_upper_air).squeeze(1)
 
     return outputs_surface, outputs_upper_air
 
@@ -263,6 +254,17 @@ def gen_timelist(base_time, step=datetime.timedelta(minutes=60)):
     return [
         (base_time + x * step).strftime("%Y%m%dT%H%M%S") for x in range(args.n_pred + 1)
     ]
+
+
+def restore_surface_data(data, mean, std):
+    """Restore the data from normalized form"""
+    _, _, ny, nx = data.shape
+
+    data = einops.rearrange(data, "b c h w -> b (h w) c", h=ny, w=nx)
+    data = data * std + mean
+    data = einops.rearrange(data, "b (h w) c -> b c h w", h=ny, w=nx)
+
+    return data
 
 
 def test(model, test_gen):
@@ -282,12 +284,15 @@ def test(model, test_gen):
 
     model.eval()
 
-    outputs = []
+    surface_prediction = []
+    upper_air_prediction = []
     times = []
     with torch.no_grad():
-        for i, (inputs, test_times) in enumerate(tqdm(test_gen)):
+        for i, (inputs, test_times) in enumerate(test_gen):
             input_surface = split_surface_data(inputs).to(args.device)
             input_upper_air = split_upper_air_data(inputs).to(args.device)
+
+            # surface_prediction.append(restore_surface_data(input_surface, surface_mean, surface_std))
 
             outputs_surface, outputs_upper_air = model_forward(
                 m,
@@ -298,23 +303,20 @@ def test(model, test_gen):
                 surface_std,
             )
 
-            outputs_surface = np.concatenate(
-                (input_surface.cpu(), outputs_surface), axis=0
+            outputs_surface = torch.cat((input_surface, outputs_surface), dim=0)
+            outputs_surface = (
+                restore_surface_data(outputs_surface, surface_mean, surface_std)
+                .detach()
+                .cpu()
+                .numpy()
             )
-            outputs_upper_air = np.concatenate(
-                (input_upper_air.cpu(), outputs_upper_air), axis=0
-            )
+            surface_prediction.append(outputs_surface)
 
-            # outputs.append((outputs_surface, outputs_upper_air))
             outputs = [outputs_surface, outputs_upper_air]
             times.append(gen_timelist(test_times[-1]))
             assert len(times[-1]) == args.n_pred + 1
 
-            # only single prediction from data
             break
-
-    # outputs = np.asarray(outputs)
-    print(outputs[0].shape, outputs[1].shape)
     return outputs, times
 
 
@@ -334,5 +336,24 @@ if __name__ == "__main__":
     )
 
     test_gen = StreamingTensor(args.dataseries_file, args.parameters, args.model_dir)
+
+    truth_times = test_gen.ds.time.values
+    truth_times = [
+        datetime.datetime.utcfromtimestamp(int(x) / 1e9) for x in truth_times
+    ]
+    truth_times = truth_times[1:]
+
+    truth = test_gen.ds[args.parameters].to_array().values  # (c, t, h, w)
+    truth = einops.rearrange(truth, "c t h w -> t c h w")
+    truth = truth[
+        1:, ...
+    ]  # remove first time step as it is the "prev prev" initial state with neural-lam
+    # truth = restore_surface_data(torch.Tensor(truth), test_gen.mean, test_gen.std)
+    truth = np.expand_dims(truth, 0)  # add batch dimension to match predictions
+
+    save_grib(truth, truth_times, "truth.grib2")
+
     predictions, times = test(m, test_gen)
+
+    times = [datetime.datetime.strptime(x, "%Y%m%dT%H%M%S") for x in times[0]]
     save_grib(predictions, times, "prediction.grib2")
