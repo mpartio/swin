@@ -2,12 +2,12 @@ import numpy as np
 import glob
 import xarray as xr
 import zarr
+import sys
+import os
+import torch
 from datetime import datetime, timedelta
 from enum import Enum
-import copy
-import torch
 from configs import get_args
-import os
 from torch.utils.data import IterableDataset
 from pangu_utils import create_parameter_weights, create_static_features
 
@@ -22,7 +22,7 @@ def read_xarray_dataset(dirname):
     return ds
 
 
-def create_generators(train_val_split=0.8):
+def create_generators(train_val_split=0.8, always_recalculate_missing_mean=False):
     if args.dataseries_directory is not None:
         print("Reading data from directory: {}".format(args.dataseries_directory))
         ds = read_xarray_dataset(args.dataseries_directory)
@@ -35,6 +35,16 @@ def create_generators(train_val_split=0.8):
     if os.path.exists("parameter_mean.pt"):
         mean = torch.load("parameter_mean.pt")
         std = torch.load("parameter_std.pt")
+
+        if len(mean) != len(args.parameters):
+            if always_recalculate_missing_mean is False:
+                print(
+                    "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
+                )
+                sys.exit(1)
+
+            mean, std, _, _ = create_static_features(ds[args.parameters])
+
     else:
         print("Parameter static features not found, calculating them now... ", end="")
         mean, std, _, _ = create_static_features(ds[args.parameters])
@@ -43,10 +53,6 @@ def create_generators(train_val_split=0.8):
         w = create_parameter_weights()
         torch.save(w, "parameter_weights.pt")
         print("done")
-
-    assert len(mean) == len(
-        args.parameters
-    ), "Mean and parameters length mismatch: were means calculated from another dataset? Remove parameter_mean.pt and parameter_std.pt and try again"
 
     ds_len = len(ds["time"])
     sample_length = args.n_hist + args.n_pred
