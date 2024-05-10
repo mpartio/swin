@@ -8,3 +8,4 @@ timm
 einops
 ml_collections
 dask
+eccodes
