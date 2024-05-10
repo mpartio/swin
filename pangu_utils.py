@@ -110,8 +110,11 @@ def create_static_features(ds):
     # create 100 element batches
     times_len = ds.sizes["time"]
     num_batches = times_len // 100
+    if num_batches == 0:
+        num_batches = 1
 
-    indexes = np.array_split(np.asarray(list(range(ds.sizes["time"]))), num_batches)
+    indexes = list(range(ds.sizes["time"]))
+    indexes = np.array_split(np.asarray(indexes), num_batches)
     means = []
     squares = []
 
