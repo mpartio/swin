@@ -5,6 +5,7 @@ import zarr
 import sys
 import os
 import torch
+import einops
 from datetime import datetime, timedelta
 from enum import Enum
 from configs import get_args
@@ -32,9 +33,9 @@ def create_generators(train_val_split=0.8, always_recalculate_missing_mean=False
     else:
         raise ValueError("No dataseries file or directory specified")
 
-    if os.path.exists("parameter_mean.pt"):
-        mean = torch.load("parameter_mean.pt")
-        std = torch.load("parameter_std.pt")
+    if os.path.exists(f"{args.load_model_from}/parameter_mean.pt"):
+        mean = torch.load(f"{args.load_model_from}/parameter_mean.pt")
+        std = torch.load(f"{args.load_model_from}/parameter_std.pt")
 
         if len(mean) != len(args.parameters):
             if always_recalculate_missing_mean is False:
@@ -115,44 +116,37 @@ class SAFDataGenerator:
         x = torch.from_numpy(data[: args.n_hist]).contiguous()
         y = torch.from_numpy(data[args.n_hist :]).contiguous()
 
-        y = torch.squeeze(y, 0)
-
-        if len(x.shape) > 3:
-            x = x.reshape(-1, args.input_size[1], args.input_size[0])
-
-        assert len(x.shape) == 3, f"x shape is not (x,x,x), its {x.shape}"
-        assert len(y.shape) == 3, f"y shape is not (x,x,x), its {y.shape}"
-
-        if y.shape == args.input_size:
-            y = torch.unsqueeze(y, 0)
+        assert len(x.shape) == 4, f"x shape is not (x,x,x,x), its {x.shape}"
+        assert len(y.shape) == 4, f"y shape is not (x,x,x,x), its {y.shape}"
 
         assert x.shape == (
-            args.n_hist * len(args.parameters),
+            args.n_hist,
+            len(args.parameters),
             args.input_size[1],
             args.input_size[0],
-        ), f"x shape is {x.shape}, should be ({args.n_hist * len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
+        ), f"x shape is {x.shape}, should be ({args.n_hist, len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
         assert y.shape == (
-            args.n_pred * len(args.parameters),
+            args.n_pred,
+            len(args.parameters),
             args.input_size[1],
             args.input_size[0],
-        ), f"y shape is {y.shape}, should be ({args.n_pred * len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
+        ), f"y shape is {y.shape}, should be ({args.n_pred, len(args.parameters)}, {args.input_size[1]}, {args.input_size[0]})"
 
-        # torch.Size([1, 2, 224, 224])
-        # to
-        # torch.Size([1, 50176, 2])
+        _, _, h, w = x.shape
 
-        x_orig_shape = x.shape
-        y_orig_shape = y.shape
-        x = x.reshape(args.n_hist, len(args.parameters), -1).permute(0, 2, 1)
-        y = y.reshape(args.n_pred, len(args.parameters), -1).permute(0, 2, 1)
+        # reshape so that channels are last
+
+        x = einops.rearrange(x, "t c h w -> t (h w) c", h=h, w=w)
+        y = einops.rearrange(y, "t c h w -> t (h w) c", h=h, w=w)
 
         x = (x - self.mean) / self.std
         y = (y - self.mean) / self.std
 
         # .. and back to original shape
 
-        x = x.permute(0, 2, 1).reshape(x_orig_shape)
-        y = y.permute(0, 2, 1).reshape(y_orig_shape)
+        x = einops.rearrange(x, "t (h w) c -> t c h w", h=h, w=w)
+        y = einops.rearrange(y, "t (h w) c -> t c h w", h=h, w=w)
+
         return (x, y)
 
     def __call__(self):
