@@ -298,10 +298,10 @@ if __name__ == "__main__":
         drop_last=True,
     )
 
-    if args.load_model:
+    if args.load_model_from is not None:
         m.load_state_dict(
             torch.load(
-                "{}/trained_model_state_dict".format(args.model_dir),
+                "{}/trained_model_state_dict".format(args.load_model_from),
                 map_location=torch.device(args.device),
             )
         )

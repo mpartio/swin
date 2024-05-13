@@ -76,10 +76,9 @@ def get_args():
     )
 
     parser.add_argument(
-        "--load_model",
-        default=False,
-        action="store_true",
-        help="Load model from checkpoint",
+        "--load_model_from",
+        type=str,
+        help="Load model from this directory",
     )
 
     parser.add_argument(
