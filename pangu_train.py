@@ -58,7 +58,9 @@ def calc_loss(
     l1loss = torch.nn.L1Loss(reduction="none")
     # bcloss = torch.nn.BCEWithLogitsLoss(reduction="none")
 
-    assert output_surface.shape == target_surface.shape  # (B C H W)
+    assert (
+        output_surface.shape == target_surface.shape
+    ), f"surface shape: {output_surface.shape}, target shape: {target_surface.shape}"  # (B C H W)
     assert output_upper_air.shape == target_upper_air.shape  # (B C Z H W)
 
     # loss_effc = bcloss(
@@ -132,7 +134,14 @@ def unroll_prediction(model, input_surface, input_upper_air, surface_mask):
             input_surface = output_surface
             input_upper_air = output_upper_air
 
-    return torch.stack(surface_prediction), torch.stack(upper_air_prediction)
+    surface_prediction = torch.stack(surface_prediction)
+    surface_prediction = einops.rearrange(surface_prediction, "t b c h w -> b t c h w")
+    upper_air_prediction = torch.stack(upper_air_prediction)
+    upper_air_prediction = einops.rearrange(
+        upper_air_prediction, "t b c z h w -> b t c z h w"
+    )
+
+    return surface_prediction, upper_air_prediction
 
 
 def train(model, train_loader, val_loader, surface_mask):
@@ -185,7 +194,6 @@ def train(model, train_loader, val_loader, surface_mask):
 
             target_surface = split_surface_data(target_all)
             target_upper_air = split_upper_air_data(target_all)
-
             optimizer.zero_grad()
 
             surface_prediction, upper_air_prediction = unroll_prediction(
@@ -294,7 +302,7 @@ if __name__ == "__main__":
     lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
     z = train_ds.get_static_features("z_heightAboveGround_0")
     surface_mask = torch.stack([lsm, z]).to(args.device)
-    surface_mask = surface_mask.unsqueeze(0).repeat(args.n_pred, 1, 1, 1)
+    surface_mask = surface_mask.unsqueeze(0).repeat(args.batch_size, 1, 1, 1)
 
     args = get_args()
 
@@ -322,7 +330,7 @@ if __name__ == "__main__":
             )
         )
 
-        print("Loaded model from {}".format(args.model_dir))
+        print("Loaded model from {}".format(args.load_model_from))
 
     save_meta()
     train(m, train_loader, valid_loader, surface_mask)
