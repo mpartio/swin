@@ -7,13 +7,14 @@ args = get_args()
 
 
 def split_surface_data(data):
+    # data shape: B, T, C, H, W
     indexes = []
     for p in args.parameters:
         if p.split("_")[-2] != "isobaricInhPa":
             indexes.append(args.parameters.index(p))
 
-    data = data[:, indexes, :, :]
-    if len(data.shape) == 3:
+    data = data[:, :, indexes, :, :]
+    if len(data.shape) == 4:
         data = data.unsqueeze(1)
     data = data.to(args.device)
 
@@ -21,6 +22,7 @@ def split_surface_data(data):
 
 
 def split_upper_air_data(data):
+    # data shape: B, T, C, H, W
     levels = []
     for p in args.parameters:
         if p.split("_")[-2] == "isobaricInhPa":
@@ -28,7 +30,7 @@ def split_upper_air_data(data):
     assert len(levels) % 3 == 0
     levels = list(set(levels))
 
-    # to B C Z W H
+    # to B T C Z W H
 
     d = {item: idx for idx, item in enumerate(args.parameters)}
     upper_air_data = None
@@ -37,20 +39,21 @@ def split_upper_air_data(data):
         params = [f"{x}_isobaricInhPa_{level}" for x in ["t", "r", "u", "v", "z"]]
         indexes = [d.get(x) for x in params]
         if upper_air_data is None:
-            upper_air_data = data[:, indexes, :, :].reshape(
-                data.shape[0], 5, 1, data.shape[2], data.shape[3]
+            upper_air_data = data[:, :, indexes, :, :].reshape(
+                data.shape[0], data.shape[1], 5, 1, data.shape[3], data.shape[4]
             )
         else:
             upper_air_data = torch.cat(
                 (
                     upper_air_data,
-                    data[:, indexes, :, :].reshape(
-                        data.shape[0], 5, 1, data.shape[2], data.shape[3]
+                    data[:, :, indexes, :, :].reshape(
+                        data.shape[0], data.shape[1], 5, 1, data.shape[3], data.shape[4]
                     ),
                 ),
-                dim=2,
+                dim=3,
             )
 
+    assert upper_air_data.shape[3] == len(levels)
     upper_air_data = upper_air_data.to(args.device)
 
     return upper_air_data

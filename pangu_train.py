@@ -1,12 +1,13 @@
-from saf import create_generators
 import torch
+import shutil
+import os
+import einops
+from saf import create_generators
 from torch.utils.data import DataLoader
 from pangu_model import Pangu, Pangu_lite
 from tqdm import tqdm
 from configs import get_args
 from pangu_utils import split_surface_data, split_upper_air_data, split_weights
-import shutil
-import os
 
 args = get_args()
 
@@ -65,26 +66,36 @@ def calc_loss(
     # ).permute(
     #   0, 2, 3, 1
     # )  # (B C H W) to (B H W C)
-    loss_effc = bimodal_loss(
-        output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
-    ).permute(
-        0, 2, 3, 1
-    )  # (B C H W) to (B H W C)
-    loss_mslp = l1loss(
-        output_surface[:, 1:2, :, :], target_surface[:, 1:2, :, :]
-    ).permute(
-        0, 2, 3, 1
-    )  # (B C H W) to (B H W C)
+    # loss_effc = bimodal_loss(
+    #    output_surface[:, 0:1, :, :], target_surface[:, 0:1, :, :]
+    # ).permute(
+    #    0, 2, 3, 1
+    # )  # (B C H W) to (B H W C)
+    # loss_mslp = l1loss(
+    #    output_surface[:, 1:2, :, :], target_surface[:, 1:2, :, :]
+    # ).permute(
+    #    0, 2, 3, 1
+    # )  # (B C H W) to (B H W C)
 
-    loss_surface = torch.cat([loss_effc, loss_mslp], dim=-1)
+    # loss_surface = torch.cat([loss_effc, loss_mslp], dim=-1)
     # loss_surface = l1loss(output_surface, target_surface).permute(
     #    0, 2, 3, 1
     # )  # (B C H W) to (B H W C)
+    # loss_surface = torch.mean(loss_surface * weights_surface)
+
+    loss_surface = l1loss(output_surface, target_surface)  # b t c h w
+
+    b, t, c, h, w = loss_surface.shape
+    loss_surface = einops.rearrange(
+        loss_surface, "b t c h w -> b t (h w) c", b=b, h=h, w=w
+    )
     loss_surface = torch.mean(loss_surface * weights_surface)
 
-    loss_upper_air = l1loss(output_upper_air, target_upper_air).permute(
-        0, 3, 4, 1, 2
-    )  # (B C Z H W) to (B H W Z C)
+    _, _, _, z, _, _ = output_upper_air.shape
+    loss_upper_air = l1loss(output_upper_air, target_upper_air)
+    loss_upper_air = einops.rearrange(
+        loss_upper_air, "b t c z h w -> b t (h w) z c", h=h, w=w, z=z
+    )
 
     loss_upper_air = (
         loss_upper_air.reshape(loss_upper_air.shape[:3] + (-1,)) * weights_upper_air
@@ -107,6 +118,23 @@ def extract_effc(data, mean, std):
     return effc
 
 
+def unroll_prediction(model, input_surface, input_upper_air, surface_mask):
+    surface_prediction, upper_air_prediction = [], []
+    with torch.autocast(device_type="cuda", dtype=torch.float32):
+        for i in range(args.n_pred):
+            output_surface, output_upper_air = model(
+                input_surface, surface_mask, input_upper_air
+            )
+
+            surface_prediction.append(output_surface)
+            upper_air_prediction.append(output_upper_air)
+
+            input_surface = output_surface
+            input_upper_air = output_upper_air
+
+    return torch.stack(surface_prediction), torch.stack(upper_air_prediction)
+
+
 def train(model, train_loader, val_loader, surface_mask):
     """Training code"""
 
@@ -124,7 +152,7 @@ def train(model, train_loader, val_loader, surface_mask):
     epochs_since_last_improvement = 0
     # scaler = torch.cuda.amp.GradScaler()
 
-    weights = torch.load("parameter_weights.pt")
+    weights = torch.load(f"{args.load_model_from}/parameter_weights.pt")
     surface_weights, upper_air_weights = split_weights(weights)
 
     parameter_mean = torch.load("parameter_mean.pt")
@@ -147,34 +175,31 @@ def train(model, train_loader, val_loader, surface_mask):
         for i, train_data in enumerate(tqdm(train_loader)):
             # B C W H
             input_all, target_all = train_data
-            input_surface = split_surface_data(input_all)
-            input_upper_air = split_upper_air_data(input_all)
+            input_surface = split_surface_data(input_all)  # B T C H W
+            input_upper_air = split_upper_air_data(input_all)  # B T C Z H W
+
+            # squeeze time dimension from input data because pangu model does not support it
+
+            input_surface = input_surface.squeeze(1)
+            input_upper_air = input_upper_air.squeeze(1)
 
             target_surface = split_surface_data(target_all)
             target_upper_air = split_upper_air_data(target_all)
 
-            effc = extract_effc(target_surface, surface_mean, surface_std)
-            effc = effc / 100
-
             optimizer.zero_grad()
 
-            with torch.autocast(device_type="cuda", dtype=torch.float32):
-                output_surface, output_upper_air = model(
-                    input_surface, surface_mask, input_upper_air
-                )
-                p_effc = extract_effc(output_surface, surface_mean, surface_std)
-                p_effc = torch.sigmoid(p_effc)
+            surface_prediction, upper_air_prediction = unroll_prediction(
+                model, input_surface, input_upper_air, surface_mask
+            )
 
-                loss = bimodal_loss(p_effc, effc).mean()
-
-                # loss = calc_loss(
-                #    output_surface,
-                #    output_upper_air,
-                #    target_surface,
-                #    target_upper_air,
-                #    surface_weights,
-                #    upper_air_weights,
-                # )
+            loss = calc_loss(
+                surface_prediction,
+                upper_air_prediction,
+                target_surface,
+                target_upper_air,
+                surface_weights,
+                upper_air_weights,
+            )
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -200,32 +225,24 @@ def train(model, train_loader, val_loader, surface_mask):
                 input_surface = split_surface_data(input_all)
                 input_upper_air = split_upper_air_data(input_all)
 
+                input_surface = input_surface.squeeze(1)
+                input_upper_air = input_upper_air.squeeze(1)
+
                 target_surface = split_surface_data(target_all)
                 target_upper_air = split_upper_air_data(target_all)
 
-                output_surface, output_upper_air = model(
-                    input_surface, surface_mask, input_upper_air
+                surface_prediction, upper_air_prediction = unroll_prediction(
+                    model, input_surface, input_upper_air, surface_mask
                 )
 
-                assert (
-                    torch.isnan(output_surface).sum() == 0
-                ), "output_surface has nan values"
-
-                effc = extract_effc(target_surface, surface_mean, surface_std)
-                effc = effc / 100
-
-                p_effc = extract_effc(output_surface, surface_mean, surface_std)
-                p_effc = torch.sigmoid(p_effc)
-
-                loss = bimodal_loss(p_effc, effc).mean()
-                #                loss = calc_loss(
-                #                    output_surface,
-                #                    output_upper_air,
-                #                    target_surface,
-                #                    target_upper_air,
-                #                    surface_weights,
-                #                    upper_air_weights,
-                #                )
+                loss = calc_loss(
+                    surface_prediction,
+                    upper_air_prediction,
+                    target_surface,
+                    target_upper_air,
+                    surface_weights,
+                    upper_air_weights,
+                )
 
                 assert torch.isnan(loss).sum() == 0, "validation loss has nan values"
                 val_loss += loss.item()
@@ -277,8 +294,7 @@ if __name__ == "__main__":
     lsm = train_ds.get_static_features("lsm_heightAboveGround_0")
     z = train_ds.get_static_features("z_heightAboveGround_0")
     surface_mask = torch.stack([lsm, z]).to(args.device)
-
-    surface_mask = surface_mask.unsqueeze(0).repeat(args.batch_size, 1, 1, 1)
+    surface_mask = surface_mask.unsqueeze(0).repeat(args.n_pred, 1, 1, 1)
 
     args = get_args()
 
